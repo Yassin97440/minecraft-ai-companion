@@ -27,6 +27,35 @@ export const WhimSchema = z.object({
 });
 export type Whim = z.infer<typeof WhimSchema>;
 
+const ACTION_REQUEST =
+  /\b(mine|miner|creuse|creuser|casse|casser|coupe|couper|r[ée]colte|r[ée]colter|ramasse|va|aller|viens|rejoins|suis|reviens|cherche|trouve|dors|dormir|couche|mange|manger|[ée]quipe|prends|sors|sortir|monte|descends|construis|construire|fabrique|crafte|donne|apporte|cache|prot[èe]ge|farme|continue|avance)\b/i;
+
+const NUDGE_PREFIX = "[Système]";
+
+/** Texte du dernier vrai message du joueur (hors rappels système). */
+function lastUserText(messages: BaseMessage[]): { index: number; text: string } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.getType() !== "human") continue;
+    const text = typeof m.content === "string" ? m.content : "";
+    if (!text.startsWith(NUDGE_PREFIX)) return { index: i, text };
+  }
+  return null;
+}
+
+/**
+ * Le joueur a demandé une action mais le modèle n'a fait que parler (aucun tool autre que `say`)
+ * et n'a pas encore été relancé : on le renvoie agir, une seule fois par demande.
+ */
+export function needsNudge(messages: BaseMessage[]): boolean {
+  const last = lastUserText(messages);
+  if (!last || !ACTION_REQUEST.test(last.text)) return false;
+  const after = messages.slice(last.index + 1);
+  const alreadyNudged = after.some((m) => m.getType() === "human");
+  const acted = after.some((m) => m.getType() === "ai" && ((m as AIMessage).tool_calls ?? []).some((c) => c.name !== "say"));
+  return !alreadyNudged && !acted;
+}
+
 /** Abstractions minimales : en prod ce sont des ChatAnthropic, en test des scripts. */
 export interface AgentModel {
   invoke(messages: BaseMessage[]): Promise<BaseMessage>;
@@ -104,6 +133,18 @@ export function buildGraph(deps: GraphDeps) {
     return { messages: [reply], steps: state.steps + 1 };
   }
 
+  function nudgeNode() {
+    return {
+      messages: [
+        new HumanMessage(
+          `${NUDGE_PREFIX} Tu n'as appelé aucun tool d'action alors que le joueur te demande d'agir. ` +
+            "Appelle maintenant le tool adapté (mine_tunnel, collect_block, sleep_in_bed, dig_out, go_to_player, find_block, look_around...). " +
+            "Si c'est vraiment impossible, explique précisément pourquoi avec say.",
+        ),
+      ],
+    };
+  }
+
   /** Garde-fou : aucun effet de bord ici, seulement des verdicts (et d'éventuelles pauses humaines). */
   function guardNode(state: S) {
     const last = state.messages.at(-1) as AIMessage;
@@ -151,15 +192,20 @@ export function buildGraph(deps: GraphDeps) {
     .addNode("plan", planNode)
     .addNode("guard", guardNode)
     .addNode("act", actNode)
+    .addNode("nudge", nudgeNode)
     .addConditionalEdges(START, (s: S) => (s.mode === "idle" ? "lubie" : "plan"), ["lubie", "plan"])
     .addConditionalEdges("lubie", (s: S) => (s.whim ? "plan" : END), ["plan", END])
     // Tant qu'il y a des tool_calls on passe par guard -> act, même au-delà du plafond,
     // pour ne jamais laisser un tool_call sans ToolMessage dans l'historique.
     .addConditionalEdges(
       "plan",
-      (s: S) => ((s.messages.at(-1) as AIMessage).tool_calls?.length ? "guard" : END),
-      ["guard", END],
+      (s: S) => {
+        if ((s.messages.at(-1) as AIMessage).tool_calls?.length) return "guard";
+        return s.mode === "chat" && s.steps < deps.maxSteps && needsNudge(s.messages) ? "nudge" : END;
+      },
+      ["guard", "nudge", END],
     )
+    .addEdge("nudge", "plan")
     .addEdge("guard", "act")
     .addConditionalEdges("act", (s: S) => (s.steps >= deps.maxSteps ? END : "plan"), ["plan", END])
     .compile({ checkpointer: new MemorySaver() });

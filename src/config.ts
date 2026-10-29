@@ -37,6 +37,7 @@ export const config = {
   limits: {
     maxStepsPerRun: 12,
     maxCollect: 32,
+    maxTunnel: 24,
     historyMessages: 40,
   },
   safety: {

@@ -29,7 +29,7 @@ function setup(opts: { chat?: AgentModel; idle?: AgentModel; whim?: Whim; maxSte
       description: name,
       schema: z.object({}).passthrough(),
     });
-  const tools = ["say", "run_blueprint", "emote"].map(mk);
+  const tools = ["say", "run_blueprint", "emote", "mine_tunnel"].map(mk);
   const graph = buildGraph({
     tools,
     chatModel: opts.chat ?? scripted(new AIMessage("rien")),
@@ -123,6 +123,31 @@ test("idle : une sortie structurée invalide (petit modèle) saute la lubie sans
   });
   await broken.invoke({ messages: [], mode: "idle" as const, steps: 0, whim: null }, cfg);
   assert.deepEqual(log, []);
+});
+
+test("demande d'action sans tool : le modèle est relancé une fois pour agir", async () => {
+  let calls = 0;
+  const inner = scripted(new AIMessage("Ok, j'y vais !"), call("mine_tunnel", { length: 5 }), new AIMessage("fini"));
+  const { graph, log, cfg } = setup({
+    chat: { invoke: async (m: BaseMessage[]) => (calls++, inner.invoke(m)) },
+  });
+  await graph.invoke(chatInput("mine avec ta pioche"), cfg);
+  assert.deepEqual(log, ['mine_tunnel:{"length":5}']);
+  assert.equal(calls, 3);
+});
+
+test("pas de relance quand le joueur ne demande aucune action, ni quand le modèle abandonne après un rappel", async () => {
+  let calls = 0;
+  const talker: AgentModel = { invoke: async () => (calls++, new AIMessage("blabla")) };
+  const a = setup({ chat: talker });
+  await a.graph.invoke(chatInput("salut"), a.cfg);
+  assert.equal(calls, 1);
+
+  calls = 0;
+  const b = setup({ chat: talker });
+  await b.graph.invoke(chatInput("va miner du charbon"), b.cfg);
+  assert.equal(calls, 2, "une seule relance, pas de boucle");
+  assert.deepEqual(b.log, []);
 });
 
 test("plafond d'étapes : on s'arrête sans tool_call orphelin", async () => {

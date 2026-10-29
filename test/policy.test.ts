@@ -22,6 +22,15 @@ test("run_blueprint demande l'accord, sauf auto-approve", () => {
   assert.equal(checkToolCall("run_blueprint", { name: "cabin" }, "chat", { ...opts, autoApproveBuilds: true }).kind, "allow");
 });
 
+test("mine_tunnel : longueur plafonnée, interdit en mode autonome", () => {
+  const o = { ...opts, maxTunnel: 24 };
+  assert.equal(checkToolCall("mine_tunnel", { length: 10 }, "chat", o).kind, "allow");
+  assert.equal(checkToolCall("mine_tunnel", { length: 99 }, "chat", o).kind, "deny");
+  assert.equal(checkToolCall("mine_tunnel", { length: 5 }, "idle", o).kind, "deny");
+  assert.equal(checkToolCall("sleep_in_bed", {}, "idle", o).kind, "deny");
+  assert.equal(checkToolCall("look_around", {}, "idle", o).kind, "allow");
+});
+
 test("en mode autonome, seuls les tools de l'allowlist passent", () => {
   assert.equal(checkToolCall("run_blueprint", { name: "cabin" }, "idle", opts).kind, "deny");
   assert.equal(checkToolCall("give_to_player", {}, "idle", opts).kind, "deny");

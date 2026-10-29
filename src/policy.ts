@@ -11,9 +11,14 @@ export type Verdict =
 export const IDLE_TOOLS = new Set([
   "say",
   "get_status",
+  "look_around",
+  "find_block",
   "go_to",
   "wander",
   "emote",
+  "equip_item",
+  "eat",
+  "dig_out",
   "collect_block",
   "craft_item",
   "remember",
@@ -52,14 +57,18 @@ export function inHome(pos: { x: number; y: number; z: number }): boolean {
   return Math.hypot(dx, dz) <= home.radius;
 }
 
-export type PolicyOptions = { autoApproveBuilds: boolean; maxCollect: number };
+export type PolicyOptions = { autoApproveBuilds: boolean; maxCollect: number; maxTunnel?: number };
 
 /** Fonction pure : décide si un appel de tool passe, est refusé, ou demande l'accord du joueur. */
 export function checkToolCall(
   name: string,
   args: Record<string, any>,
   mode: Mode,
-  opts: PolicyOptions = { autoApproveBuilds: config.safety.autoApproveBuilds, maxCollect: config.limits.maxCollect },
+  opts: PolicyOptions = {
+    autoApproveBuilds: config.safety.autoApproveBuilds,
+    maxCollect: config.limits.maxCollect,
+    maxTunnel: config.limits.maxTunnel,
+  },
 ): Verdict {
   if (mode === "idle" && !IDLE_TOOLS.has(name)) {
     return { kind: "deny", reason: `Le tool "${name}" n'est pas autorisé quand tu agis seul.` };
@@ -73,6 +82,13 @@ export function checkToolCall(
       }
       if (Number(args.count ?? 1) > opts.maxCollect) {
         return { kind: "deny", reason: `Maximum ${opts.maxCollect} blocs par appel. Fais plusieurs appels.` };
+      }
+      return { kind: "allow" };
+    }
+    case "mine_tunnel": {
+      const max = opts.maxTunnel ?? config.limits.maxTunnel;
+      if (Number(args.length ?? 1) > max) {
+        return { kind: "deny", reason: `Maximum ${max} pas par tunnel. Fais plusieurs appels.` };
       }
       return { kind: "allow" };
     }
