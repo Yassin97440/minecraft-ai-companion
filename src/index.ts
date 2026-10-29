@@ -5,7 +5,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { config } from "./config.js";
 import { buildGraph, WhimSchema } from "./graph.js";
 import { assertLlmConfigured, createAgentModel, createWhimModel } from "./llm.js";
-import { Journal } from "./memory.js";
+import { Journal, Memory } from "./memory.js";
 import { IDLE_TOOLS } from "./policy.js";
 import { createTools } from "./tools.js";
 import { snapshot, type Ctx } from "./world.js";
@@ -35,7 +35,11 @@ const bot = mineflayer.createBot({
 bot.loadPlugin(pathfinder);
 
 const journal = new Journal();
-const ctx: Ctx = { bot, journal, run: { saidThisRun: false } };
+const memory = new Memory();
+const ctx: Ctx = { bot, journal, memory, run: { saidThisRun: false, interrupted: false } };
+
+/** Mots qui coupent une action en cours, même sans mission. */
+const STOP_WORDS = /^(stop|arr[êe]te|attends|pause|annule|laisse tomber|reviens|viens)\b/i;
 
 bot.once("spawn", () => {
   bot.pathfinder.setMovements(new Movements(bot));
@@ -49,11 +53,15 @@ bot.once("spawn", () => {
     whimModel: createWhimModel(WhimSchema),
     world: () => snapshot(bot),
     journal,
+    memory,
     maxSteps: config.limits.maxStepsPerRun,
+    missionSteps: config.limits.missionSteps,
+    shouldStop: () => ctx.run.interrupted,
     historyMessages: config.limits.historyMessages,
   });
 
-  const thread = { configurable: { thread_id: "companion" }, recursionLimit: 60 };
+  // 3 super-étapes par étape LLM (plan, guard, act) : large marge pour les missions.
+  const thread = { configurable: { thread_id: "companion" }, recursionLimit: config.limits.missionSteps * 4 + 20 };
   let running = false;
   let awaitingApproval = false;
   let lastActivity = Date.now();
@@ -63,6 +71,7 @@ bot.once("spawn", () => {
   async function run(input: unknown) {
     running = true;
     ctx.run.saidThisRun = false;
+    ctx.run.interrupted = false;
     try {
       const result = await graph.invoke(input as any, thread);
 
@@ -80,6 +89,11 @@ bot.once("spawn", () => {
       const last = result.messages.at(-1);
       const text = last && last.getType() === "ai" ? textOf(last.content) : "";
       if (!ctx.run.saidThisRun && text) bot.chat(text.slice(0, 240));
+
+      // Plafond d'étapes atteint en pleine mission : on le dit au lieu de s'arrêter en silence.
+      if (memory.activeMission() && !ctx.run.interrupted && result.steps >= config.limits.missionSteps) {
+        bot.chat("Petite pause dans ma mission (beaucoup d'étapes d'affilée). Dis « continue » pour reprendre.");
+      }
     } catch (err) {
       const rateLimited = (err as { status?: number }).status === 429;
       console.error(rateLimited ? "[agent] 429 : le fournisseur du modèle est saturé" : "[agent] erreur:", rateLimited ? "" : err);
@@ -116,6 +130,11 @@ bot.once("spawn", () => {
       void run(new Command({ resume: { approved: yes } }));
       if (!yes) queue.push(`${username}\u0000${message}`);
       return;
+    }
+    // Le joueur reprend la main pendant une mission ou un ordre d'arrêt : on coupe l'action en cours.
+    if (running && (memory.activeMission() || STOP_WORDS.test(message.trim()))) {
+      ctx.run.interrupted = true;
+      bot.pathfinder.stop();
     }
     void onInstruction(username, message);
   });

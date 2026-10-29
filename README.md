@@ -31,8 +31,10 @@ flowchart TD
     LU --> PL
     PL -->|tool_calls| GU[guard<br/>policy pure + pause oui/non]
     PL -->|texte seul + demande d'action| NU[nudge<br/>rappel : agis, ne parle pas]
+    PL -->|texte seul + mission active| CO[continue<br/>rappel : poursuis la mission]
     PL -->|texte seul| END
     NU --> PL
+    CO --> PL
     GU --> AC[act<br/>exécute les tools]
     AC -->|< 12 étapes| PL
     AC -->|plafond atteint| END
@@ -42,6 +44,7 @@ flowchart TD
 - **guard** : politique pure (`src/policy.ts`), sans effet de bord. Autorise, refuse, ou **met le graphe en pause** (`interrupt`) pour demander "oui/non" au joueur.
 - **act** : exécute les tools autorisés, renvoie les refus au modèle comme `ToolMessage` d'erreur.
 - **nudge** : si tu demandes une action ("mine", "va", "dors"...) et que le modèle se contente de répondre en texte, il est relancé **une fois** pour qu'il agisse vraiment.
+- **Missions** : pour une consigne en plusieurs étapes ("trouve du fer, du diamant et de la redstone"), le modèle appelle `start_mission` avec des objectifs. Tant que la mission est active, un jalon annoncé en texte ne termine plus le tour : le nœud `continue` le relance. Il coche les objectifs avec `mission_progress` et conclut avec `end_mission`. Garde-fous : seulement en mode chat (jamais pour les lubies), 2 relances d'affilée sans tool au maximum, plafond de `missionSteps` (60) étapes par tour, arrêt après 6 échecs d'affilée, et le joueur reprend la main à tout moment (un message pendant une mission, ou `stop` / `attends` / `viens`, coupe l'action en cours).
 - **Anti-boucle** : après 3 échecs de tools d'affilée, un rappel lui demande d'abandonner la tâche, d'expliquer ce qui bloque et de proposer une alternative ; après 6, le tour s'arrête. Un succès remet le compteur à zéro. Le prompt précise aussi que le dernier message du joueur prime sur la tâche en cours.
 - **lubie** : quand tu n'as rien demandé depuis `IDLE_AFTER_SECONDS`, un modèle invente une idée ; elle est écartée si `risk = high`, puis exécutée avec une **allowlist réduite** de tools.
 - **Constructions** : `run_blueprint` vérifie l'inventaire, le datapack le revérifie, retire les matériaux (`clear`), puis place la structure. Le LLM choisit *quoi/quand/où*, jamais *comment*.
@@ -76,10 +79,15 @@ flowchart TB
 |---|---|---|
 | Règles et personnalité | permanente (code) | `src/prompts.ts`, `PERSONALITY` |
 | État du monde | un tour | `snapshot()` |
-| Journal | disque, survit au redémarrage | tes messages, lubies, constructions, lits utilisés, tunnels creusés, notes (`remember`) |
+| Mémoire durable | disque, survit au redémarrage | lieux, préférences, faits, mission en cours |
+| Journal | disque, survit au redémarrage | tes messages, lubies, constructions, tunnels creusés |
 | Historique | RAM, perdu au redémarrage | derniers messages et résultats de tools |
 
-Pas encore de mémoire structurée (position de la mine, des coffres, objectif courant) : c'est la prochaine étape.
+**Mémoire durable** (`data/memory.json`, `src/memory.ts`) : des entrées dédupliquées par clé (lieux, préférences, faits) et la mission en cours, relues à chaque décision. Elle s'alimente de deux façons :
+- **automatiquement** : le lit utilisé, chaque coffre ouvert (avec son contenu) et l'entrée de la mine sont notés par les tools eux-mêmes ;
+- **par le modèle** : `remember` (clé, type, texte, coordonnées optionnelles) pour tout ce qui servira plus tard (un gisement, la base, une règle du joueur), `forget` pour corriger.
+
+Le journal (`data/journal.json`) reste l'historique brut des événements.
 
 ## Les tools
 
@@ -97,7 +105,9 @@ Pas encore de mémoire structurée (position de la mine, des coffres, objectif c
 | `chest_contents`, `store_in_chest`, `take_from_chest` | lister, déposer (`*` = toutes les ressources), prendre (64 max) | contenu du coffre, différence d'inventaire |
 | `craft_item`, `give_to_player` | fabriquer, donner | différence d'inventaire |
 | `list_blueprints`, `run_blueprint` | constructions (accord oui/non) | matériaux consommés |
-| `remember`, `emote`, `wander` | journal, animations, balade | – |
+| `remember`, `forget` | mémoire durable (lieux, préférences, faits) | – |
+| `start_mission`, `mission_progress`, `end_mission` | consignes longues, suivies jusqu'au bout | objectifs cochés selon l'inventaire réel |
+| `emote`, `wander` | animations, balade | – |
 
 Garde-fous (`src/policy.ts`) : blocs protégés (coffres, fours, lits...), zone `HOME_*` intouchable, longueur de tunnel plafonnée, mode autonome limité à une allowlist, seul `OWNER_USERNAME` donne des ordres.
 
@@ -159,7 +169,7 @@ Les tests couvrent la politique, le graphe (pause humaine, refus, allowlist auto
 
 ## Pistes
 
-- Mémoire structurée : où est la mine, les coffres, le lit, le dernier objectif.
+- Réflexion de fin de tour : un petit appel LLM qui relit le tour et décide quoi mémoriser (aujourd'hui c'est le modèle qui appelle `remember` de lui-même).
 - Survie : se mettre à l'abri des monstres (`take_shelter`), chasser pour manger, combattre.
 - Poser des torches dans les tunnels, stocker dans un coffre.
 - Animation de construction bloc par bloc (`schedule function`), plus de blueprints.

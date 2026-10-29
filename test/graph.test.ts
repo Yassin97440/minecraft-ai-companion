@@ -7,7 +7,7 @@ import { tool } from "@langchain/core/tools";
 import { Command } from "@langchain/langgraph";
 import { z } from "zod";
 import { buildGraph, failureStreak, isFailure, type AgentModel, type Whim } from "../src/graph.js";
-import { Journal } from "../src/memory.js";
+import { Journal, Memory } from "../src/memory.js";
 
 const call = (name: string, args: Record<string, unknown>, id = `c_${name}`) =>
   new AIMessage({ content: "", tool_calls: [{ id, name, args, type: "tool_call" }] });
@@ -21,7 +21,18 @@ const scripted = (...replies: AIMessage[]): AgentModel => ({
   },
 });
 
-function setup(opts: { chat?: AgentModel; idle?: AgentModel; whim?: Whim; maxSteps?: number; result?: string } = {}) {
+function setup(
+  opts: {
+    chat?: AgentModel;
+    idle?: AgentModel;
+    whim?: Whim;
+    maxSteps?: number;
+    result?: string;
+    memory?: Memory;
+    missionSteps?: number;
+    shouldStop?: () => boolean;
+  } = {},
+) {
   const log: string[] = [];
   const mk = (name: string) =>
     tool(async (args: any) => (log.push(`${name}:${JSON.stringify(args)}`), opts.result ?? "ok"), {
@@ -38,6 +49,9 @@ function setup(opts: { chat?: AgentModel; idle?: AgentModel; whim?: Whim; maxSte
     world: () => "monde de test",
     journal: new Journal(path.join(os.tmpdir(), `journal-${Math.random()}.json`)),
     maxSteps: opts.maxSteps ?? 12,
+    memory: opts.memory,
+    missionSteps: opts.missionSteps,
+    shouldStop: opts.shouldStop,
     historyMessages: 40,
     policy: { autoApproveBuilds: false, maxCollect: 32 },
   });
@@ -169,6 +183,65 @@ test("anti-boucle : un succès remet le compteur à zéro", () => {
   const msgs = [new HumanMessage("va chercher"), ko("a"), ko("b"), ok, ko("c")];
   assert.deepEqual(failureStreak(msgs), { streak: 1, noticed: false });
   assert.equal(isFailure(new ToolMessage({ tool_call_id: "x", content: "Aucun lit dans un rayon de 48 blocs" })), true);
+});
+
+const tmpMemory = () => new Memory(path.join(os.tmpdir(), `memory-${Math.random()}.json`));
+const withMission = () => {
+  const memory = tmpMemory();
+  memory.startMission("fer et diamant", ["fer", "diamant"]);
+  return memory;
+};
+const counting = (inner: AgentModel) => {
+  const stats = { calls: 0 };
+  return { stats, model: { invoke: async (m: BaseMessage[]) => (stats.calls++, inner.invoke(m)) } as AgentModel };
+};
+
+test("mission : un jalon annoncé en texte ne coupe pas la boucle, mais elle ne tourne pas à vide", async () => {
+  const { stats, model } = counting(scripted(new AIMessage("jalon"), call("mine_tunnel", { length: 3 }), new AIMessage("jalon 2")));
+  const { graph, log, cfg } = setup({ chat: model, memory: withMission(), missionSteps: 30 });
+  await graph.invoke(chatInput("salut"), cfg);
+  assert.deepEqual(log, ['mine_tunnel:{"length":3}']);
+  assert.equal(stats.calls, 5, "2 relances d'affilée sans tool, puis arrêt");
+});
+
+test("mission : le joueur qui reprend la main (shouldStop) arrête le tour", async () => {
+  const { stats, model } = counting(scripted(new AIMessage("jalon")));
+  const { graph, cfg } = setup({ chat: model, memory: withMission(), shouldStop: () => true });
+  await graph.invoke(chatInput("salut"), cfg);
+  assert.equal(stats.calls, 1);
+});
+
+test("mission : plafond d'étapes élargi mais borné", async () => {
+  const { graph, cfg } = setup({ chat: scripted(call("emote", { action: "jump" })), memory: withMission(), maxSteps: 3, missionSteps: 7 });
+  const res = await graph.invoke(chatInput("salut"), cfg);
+  assert.equal(res.steps, 7);
+});
+
+test("sans mission, le plafond reste maxSteps et aucune relance n'a lieu", async () => {
+  const { stats, model } = counting(scripted(new AIMessage("rien")));
+  const { graph, cfg } = setup({ chat: model, memory: tmpMemory() });
+  await graph.invoke(chatInput("salut"), cfg);
+  assert.equal(stats.calls, 1);
+});
+
+test("Memory : upsert par clé, mission, persistance", () => {
+  const file = path.join(os.tmpdir(), `memory-${Math.random()}.json`);
+  const m = new Memory(file);
+  m.set("Lit", "place", "lit de la base", { x: 1.2, y: 64, z: -3.7 });
+  m.set("lit", "place", "lit déplacé", { x: 10, y: 65, z: 20 });
+  assert.equal(m.entries().length, 1);
+  assert.match(m.format(), /lit déplacé \(10, 65, 20\)/);
+
+  m.startMission("minerais", ["10 fer", "3 diamants"]);
+  assert.ok(m.markObjective("fer"));
+  assert.equal(m.markObjective("emeraude"), null);
+  assert.match(new Memory(file).format(), /MISSION EN COURS.*\[x\] 10 fer.*\[ \] 3 diamants/);
+
+  assert.equal(m.endMission("done", "tout trouvé"), true);
+  assert.equal(m.activeMission(), null);
+  assert.match(m.format(), /dernière mission, terminée.*tout trouvé/);
+  assert.equal(m.forget("lit"), true);
+  assert.equal(m.forget("lit"), false);
 });
 
 test("plafond d'étapes : on s'arrête sans tool_call orphelin", async () => {

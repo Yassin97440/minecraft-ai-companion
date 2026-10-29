@@ -17,7 +17,7 @@ import {
 } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { z } from "zod";
-import type { Journal } from "./memory.js";
+import type { Journal, Memory } from "./memory.js";
 import { checkToolCall, type Mode } from "./policy.js";
 import { WHIM_SYSTEM, buildSystemPrompt } from "./prompts.js";
 
@@ -80,6 +80,28 @@ export function failureStreak(messages: BaseMessage[]): { streak: number; notice
   return { streak, noticed };
 }
 
+const CONTINUE_PREFIX = `${NUDGE_PREFIX} Mission`;
+const MAX_IDLE_CONTINUES = 2; // relances d'affilée sans aucun tool avant d'abandonner
+
+/** Relances "continue la mission" consécutives, sans tool entre elles. */
+function trailingContinues(messages: BaseMessage[]): number {
+  let n = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.getType() === "tool") break;
+    if (m.getType() === "human") {
+      if (String(m.content).startsWith(CONTINUE_PREFIX)) n++;
+      else if (!String(m.content).startsWith(NUDGE_PREFIX)) break;
+    }
+  }
+  return n;
+}
+
+/** Une mission est active mais le modèle s'est arrêté (par ex. après avoir annoncé un jalon) : on le relance. */
+export function needsContinue(messages: BaseMessage[], missionActive: boolean): boolean {
+  return missionActive && trailingContinues(messages) < MAX_IDLE_CONTINUES;
+}
+
 /** Abstractions minimales : en prod ce sont des ChatAnthropic, en test des scripts. */
 export interface AgentModel {
   invoke(messages: BaseMessage[]): Promise<BaseMessage>;
@@ -100,6 +122,12 @@ export type GraphDeps = {
   journal: Journal;
   maxSteps: number;
   historyMessages: number;
+  /** Mémoire durable : injectée dans le prompt, et source de la mission en cours. */
+  memory?: Memory;
+  /** Plafond d'étapes d'un tour pendant une mission (défaut : maxSteps). */
+  missionSteps?: number;
+  /** Vrai quand le joueur a repris la main : on termine le tour au plus vite. */
+  shouldStop?: () => boolean;
   policy?: Parameters<typeof checkToolCall>[3];
 };
 
@@ -141,7 +169,9 @@ export function buildGraph(deps: GraphDeps) {
   }
 
   async function planNode(state: S) {
-    const system = new SystemMessage(buildSystemPrompt(state.mode, deps.world(), deps.journal.format(12)));
+    const system = new SystemMessage(
+      buildSystemPrompt(state.mode, deps.world(), deps.journal.format(12), deps.memory?.format() ?? "(rien de noté)"),
+    );
     let history = await trimMessages(state.messages, {
       maxTokens: deps.historyMessages,
       tokenCounter: (msgs: BaseMessage[]) => msgs.length,
@@ -155,6 +185,23 @@ export function buildGraph(deps: GraphDeps) {
     const model = state.mode === "idle" ? deps.idleModel : deps.chatModel;
     const reply = await model.invoke([system, ...history]);
     return { messages: [reply], steps: state.steps + 1 };
+  }
+
+  /** Plafond d'étapes : plus large quand une mission est active (en mode chat). */
+  const stepCap = (s: S) =>
+    s.mode === "chat" && deps.memory?.activeMission() ? Math.max(deps.maxSteps, deps.missionSteps ?? deps.maxSteps) : deps.maxSteps;
+
+  function continueNode() {
+    const m = deps.memory!.activeMission()!;
+    const left = m.objectives.filter((o) => !o.done).map((o) => o.text);
+    return {
+      messages: [
+        new HumanMessage(
+          `${CONTINUE_PREFIX} en cours : « ${m.goal} ». Objectifs restants : ${left.length ? left.join(", ") : "aucun (conclus avec end_mission)"}. ` +
+            "Ne t'arrête pas à un jalon : poursuis avec le prochain tool. Si tout est fait, appelle end_mission(done) ; si c'est impossible, end_mission(abandoned).",
+        ),
+      ],
+    };
   }
 
   function nudgeNode() {
@@ -213,7 +260,8 @@ export function buildGraph(deps: GraphDeps) {
       results.push(
         new HumanMessage(
           `${ABANDON_PREFIX} : ${streak} actions ratées d'affilée. Cesse d'insister sur cette tâche : explique au joueur en une phrase ` +
-            "ce qui bloque (avec say), propose une alternative, puis arrête-toi. Le dernier message du joueur prime sur tout le reste.",
+            "ce qui bloque (avec say), propose une alternative, puis arrête-toi. S'il y a une mission en cours, appelle end_mission(abandoned). " +
+            "Le dernier message du joueur prime sur tout le reste.",
         ),
       );
     }
@@ -226,6 +274,7 @@ export function buildGraph(deps: GraphDeps) {
     .addNode("guard", guardNode)
     .addNode("act", actNode)
     .addNode("nudge", nudgeNode)
+    .addNode("continue", continueNode)
     .addConditionalEdges(START, (s: S) => (s.mode === "idle" ? "lubie" : "plan"), ["lubie", "plan"])
     .addConditionalEdges("lubie", (s: S) => (s.whim ? "plan" : END), ["plan", END])
     // Tant qu'il y a des tool_calls on passe par guard -> act, même au-delà du plafond,
@@ -234,15 +283,18 @@ export function buildGraph(deps: GraphDeps) {
       "plan",
       (s: S) => {
         if ((s.messages.at(-1) as AIMessage).tool_calls?.length) return "guard";
-        return s.mode === "chat" && s.steps < deps.maxSteps && needsNudge(s.messages) ? "nudge" : END;
+        if (s.mode !== "chat" || s.steps >= stepCap(s) || deps.shouldStop?.()) return END;
+        if (needsNudge(s.messages)) return "nudge";
+        return needsContinue(s.messages, !!deps.memory?.activeMission()) ? "continue" : END;
       },
-      ["guard", "nudge", END],
+      ["guard", "nudge", "continue", END],
     )
     .addEdge("nudge", "plan")
+    .addEdge("continue", "plan")
     .addEdge("guard", "act")
     .addConditionalEdges(
       "act",
-      (s: S) => (s.steps >= deps.maxSteps || failureStreak(s.messages).streak >= STOP_AFTER ? END : "plan"),
+      (s: S) => (s.steps >= stepCap(s) || failureStreak(s.messages).streak >= STOP_AFTER || deps.shouldStop?.() ? END : "plan"),
       ["plan", END],
     )
     .compile({ checkpointer: new MemorySaver() });

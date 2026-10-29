@@ -3,10 +3,15 @@ import assert from "node:assert/strict";
 import { config } from "../src/config.js";
 import { WhimSchema } from "../src/graph.js";
 import { assertLlmConfigured, createAgentModel, createWhimModel } from "../src/llm.js";
-import { Journal } from "../src/memory.js";
+import { Journal, Memory } from "../src/memory.js";
 import { createTools } from "../src/tools.js";
 
-const tools = createTools({ bot: {} as any, journal: new Journal("data/_wiring.json"), run: { saidThisRun: false } });
+const tools = createTools({
+  bot: {} as any,
+  journal: new Journal("data/_wiring.json"),
+  memory: new Memory("data/_wiring_memory.json"),
+  run: { saidThisRun: false, interrupted: false },
+});
 
 // Vérifie le câblage LangChain (schémas zod -> tools de chaque fournisseur) sans réseau ni serveur Minecraft.
 for (const provider of ["openrouter", "google", "ollama", "anthropic"]) {

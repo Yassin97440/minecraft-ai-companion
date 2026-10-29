@@ -70,7 +70,7 @@ const ARMOR_SLOTS: [string, "head" | "torso" | "legs" | "feet"][] = [
 const BAD_FOOD = new Set(["rotten_flesh", "spider_eye", "poisonous_potato", "pufferfish", "chorus_fruit", "suspicious_stew"]);
 
 export function createTools(ctx: Ctx) {
-  const { bot, journal } = ctx;
+  const { bot, journal, memory } = ctx;
   const dist = (x: number, y: number, z: number) => {
     const p = bot.entity.position;
     return Math.round(Math.hypot(p.x - x, p.y - y, p.z - z));
@@ -277,7 +277,7 @@ export function createTools(ctx: Ctx) {
           continue;
         }
         if (bot.isSleeping) {
-          journal.append("place", `lit utilisé en ${formatPos(pos)}`);
+          memory.set("lit", "place", "lit où je dors", pos);
           return `Je dors dans le lit en ${formatPos(pos)}. Je me réveillerai au matin (la nuit ne passe que si tous les joueurs dorment).`;
         }
       }
@@ -321,6 +321,10 @@ export function createTools(ctx: Ctx) {
       let why = "";
 
       for (let i = 0; i < count; i++) {
+        if (ctx.run.interrupted) {
+          why = "interrompu par le joueur";
+          break;
+        }
         const candidates = bot
           .findBlocks({ matching: def.id, maxDistance: 48, count: 24 })
           .filter((p) => !inHome(p))
@@ -388,6 +392,10 @@ export function createTools(ctx: Ctx) {
 
       try {
         for (let i = 0; i < length; i++) {
+          if (ctx.run.interrupted) {
+            stop = "interrompu par le joueur";
+            break;
+          }
           if (bot.health < 8) {
             stop = "vie trop basse";
             break;
@@ -459,6 +467,7 @@ export function createTools(ctx: Ctx) {
       const diff = inventoryDiff(before, inventoryTotals(bot));
       const where = formatPos(bot.entity.position);
       journal.append("mine", `${stairs ? "escalier" : "tunnel"} vers ${NAMES_FR[dirKey]} depuis ${formatPos(start)} (${steps} pas)`);
+      if (steps > 0 && !memory.entries().some((e) => e.key === "mine")) memory.set("mine", "place", `entrée de ma mine (${stairs ? "escalier" : "tunnel"} vers ${NAMES_FR[dirKey]})`, start);
       return `${stairs ? "Escalier descendant" : "Tunnel"} vers ${NAMES_FR[dirKey]} : ${steps}/${length} pas, ${dug} blocs cassés (arrêt : ${stop}). Inventaire réel: ${diff}. Position: ${where} (départ ${formatPos(start)}).`;
     },
     {
@@ -483,7 +492,7 @@ export function createTools(ctx: Ctx) {
   /** Va au coffre demandé (ou au plus proche), l'ouvre, exécute `fn`, puis le referme. */
   async function withChest<T>(
     args: { x?: number; y?: number; z?: number },
-    fn: (chest: Awaited<ReturnType<Bot["openContainer"]>>, where: string) => Promise<T>,
+    fn: (chest: Awaited<ReturnType<Bot["openContainer"]>>, where: string, at: { x: number; y: number; z: number }) => Promise<T>,
   ): Promise<T | string> {
     const ids = CONTAINERS.map((n) => bot.registry.blocksByName[n]?.id).filter((i): i is number => i !== undefined);
     const here = bot.entity.position;
@@ -509,7 +518,8 @@ export function createTools(ctx: Ctx) {
       return `Impossible d'ouvrir le coffre en ${where} (${(err as Error).message}).`;
     }
     try {
-      return await fn(chest, where);
+      memory.set(`coffre ${where}`, "place", "coffre", pos.position);
+      return await fn(chest, where, pos.position);
     } finally {
       chest.close();
     }
@@ -523,8 +533,8 @@ export function createTools(ctx: Ctx) {
 
   const chestContents = tool(
     async (args) =>
-      withChest(args, async (chest, where) => {
-        journal.append("place", `coffre en ${where}`);
+      withChest(args, async (chest, where, at) => {
+        memory.set(`coffre ${where}`, "place", `coffre contenant : ${summarize(chest.containerItems())}`, at);
         return `Coffre en ${where} : ${summarize(chest.containerItems())}`;
       }),
     {
@@ -556,7 +566,6 @@ export function createTools(ctx: Ctx) {
             break;
           }
         }
-        journal.append("place", `coffre en ${at}`);
         return `Déposé dans le coffre en ${at}. Inventaire réel: ${inventoryDiff(before, inventoryTotals(bot))}.`;
       }),
     {
@@ -584,7 +593,6 @@ export function createTools(ctx: Ctx) {
             return `Échec du retrait (${(err as Error).message}). Inventaire plein ?`;
           }
         }
-        journal.append("place", `coffre en ${at}`);
         return `Pris dans le coffre en ${at}. Inventaire réel: ${inventoryDiff(before, inventoryTotals(bot))}.`;
       }),
     {
@@ -690,14 +698,79 @@ export function createTools(ctx: Ctx) {
   );
 
   const remember = tool(
-    async ({ note }) => {
-      journal.append("note", note);
-      return "Noté dans mon journal.";
+    async ({ key, kind, text, x, y, z: zc }) => {
+      const pos = x !== undefined && y !== undefined && zc !== undefined ? { x, y, z: zc } : undefined;
+      memory.set(key, kind, text, pos);
+      return `Mémorisé "${key}" (${kind}). Je le retrouverai dans ma mémoire durable, même après un redémarrage.`;
     },
     {
       name: "remember",
-      description: "Écrire une note dans ton journal (préférences du joueur, endroits utiles, running gags).",
-      schema: z.object({ note: z.string() }),
+      description:
+        "Enregistrer dans ta mémoire durable (relue à chaque décision) une info utile PLUS TARD : un lieu (mine, base, ferme, coffre), " +
+        "une préférence ou règle du joueur, un fait important. Même clé = remplace l'ancienne valeur. " +
+        "Pas pour l'état instantané (position, inventaire) ni pour ce qui est déjà dans la mémoire. Les lits, coffres et la mine sont notés automatiquement.",
+      schema: z.object({
+        key: z.string().describe("Identifiant court et stable, ex: base, mine_fer, pref_humour"),
+        kind: z.enum(["place", "preference", "fact"]),
+        text: z.string().describe("L'info, en une phrase"),
+        x: z.number().optional(),
+        y: z.number().optional(),
+        z: z.number().optional(),
+      }),
+    },
+  );
+
+  const forget = tool(
+    async ({ key }) => (memory.forget(key) ? `Oublié "${key}".` : `Rien à oublier sous la clé "${key}".`),
+    {
+      name: "forget",
+      description: "Supprimer une entrée de ta mémoire durable devenue fausse ou inutile (par sa clé).",
+      schema: z.object({ key: z.string() }),
+    },
+  );
+
+  const startMission = tool(
+    async ({ goal, objectives }) => {
+      memory.startMission(goal, objectives);
+      return `Mission enregistrée : ${goal}. Objectifs : ${objectives.join(", ")}. Enchaîne maintenant avec le premier, sans t'arrêter à chaque étape.`;
+    },
+    {
+      name: "start_mission",
+      description:
+        "À appeler dès que le joueur donne une consigne en PLUSIEURS étapes ou longue (ex: 'trouve du fer, du diamant et de la redstone'). " +
+        "Tu continueras automatiquement jusqu'à la fin. Pas pour une action simple et immédiate.",
+      schema: z.object({
+        goal: z.string().describe("La consigne du joueur, résumée"),
+        objectives: z.array(z.string()).min(1).max(8).describe("Les objectifs concrets, ex: ['10 fer', '3 diamants']"),
+      }),
+    },
+  );
+
+  const missionProgress = tool(
+    async ({ objective }) => {
+      const m = memory.markObjective(objective);
+      if (!m) return `Aucun objectif ne correspond à "${objective}" (ou pas de mission active).`;
+      const left = m.objectives.filter((o) => !o.done).map((o) => o.text);
+      return left.length
+        ? `Objectif coché. Il reste : ${left.join(", ")}. Continue avec le suivant.`
+        : "Tous les objectifs sont faits : appelle end_mission(done) avec un résumé.";
+    },
+    {
+      name: "mission_progress",
+      description: "Cocher un objectif de la mission une fois réellement atteint (vérifié par l'inventaire), puis enchaîner sur le suivant.",
+      schema: z.object({ objective: z.string() }),
+    },
+  );
+
+  const endMission = tool(
+    async ({ status, summary }) =>
+      memory.endMission(status, summary)
+        ? `Mission ${status === "done" ? "terminée" : "abandonnée"}. Annonce le résultat au joueur en une phrase.`
+        : "Pas de mission active.",
+    {
+      name: "end_mission",
+      description: "Terminer la mission : done si tout est fait, abandoned si c'est impossible ou si le joueur change de plan.",
+      schema: z.object({ status: z.enum(["done", "abandoned"]), summary: z.string() }),
     },
   );
 
@@ -724,5 +797,9 @@ export function createTools(ctx: Ctx) {
     listBlueprints,
     runBlueprint,
     remember,
+    forget,
+    startMission,
+    missionProgress,
+    endMission,
   ];
 }

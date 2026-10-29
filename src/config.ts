@@ -38,6 +38,8 @@ export const config = {
     maxStepsPerRun: 12,
     maxCollect: 32,
     maxTunnel: 24,
+    /** Plafond d'étapes LLM pour un tour pendant une mission (sinon `maxStepsPerRun`). */
+    missionSteps: 60,
     historyMessages: 40,
   },
   safety: {

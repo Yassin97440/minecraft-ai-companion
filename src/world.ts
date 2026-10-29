@@ -1,11 +1,16 @@
 import type { Bot } from "mineflayer";
-import type { Journal } from "./memory.js";
+import type { Journal, Memory } from "./memory.js";
 
 export type Ctx = {
   bot: Bot;
   journal: Journal;
-  /** Remis à false avant chaque run ; passe à true quand le tool `say` a parlé. */
-  run: { saidThisRun: boolean };
+  memory: Memory;
+  run: {
+    /** Remis à false avant chaque run ; passe à true quand le tool `say` a parlé. */
+    saidThisRun: boolean;
+    /** Le joueur a parlé pendant une mission : les tools longs s'arrêtent dès que possible. */
+    interrupted: boolean;
+  };
 };
 
 export function itemCount(bot: Bot, name: string): number {
