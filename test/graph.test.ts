@@ -6,7 +6,7 @@ import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langcha
 import { tool } from "@langchain/core/tools";
 import { Command } from "@langchain/langgraph";
 import { z } from "zod";
-import { buildGraph, type AgentModel, type Whim } from "../src/graph.js";
+import { buildGraph, failureStreak, isFailure, type AgentModel, type Whim } from "../src/graph.js";
 import { Journal } from "../src/memory.js";
 
 const call = (name: string, args: Record<string, unknown>, id = `c_${name}`) =>
@@ -21,10 +21,10 @@ const scripted = (...replies: AIMessage[]): AgentModel => ({
   },
 });
 
-function setup(opts: { chat?: AgentModel; idle?: AgentModel; whim?: Whim; maxSteps?: number } = {}) {
+function setup(opts: { chat?: AgentModel; idle?: AgentModel; whim?: Whim; maxSteps?: number; result?: string } = {}) {
   const log: string[] = [];
   const mk = (name: string) =>
-    tool(async (args: any) => (log.push(`${name}:${JSON.stringify(args)}`), "ok"), {
+    tool(async (args: any) => (log.push(`${name}:${JSON.stringify(args)}`), opts.result ?? "ok"), {
       name,
       description: name,
       schema: z.object({}).passthrough(),
@@ -148,6 +148,27 @@ test("pas de relance quand le joueur ne demande aucune action, ni quand le modè
   await b.graph.invoke(chatInput("va miner du charbon"), b.cfg);
   assert.equal(calls, 2, "une seule relance, pas de boucle");
   assert.deepEqual(b.log, []);
+});
+
+test("anti-boucle : 3 échecs d'affilée => rappel d'abandon, 6 => le tour s'arrête", async () => {
+  const { graph, cfg } = setup({
+    chat: scripted(call("mine_tunnel", { length: 3 })), // insiste indéfiniment
+    result: "Échec : rien ne marche",
+    maxSteps: 12,
+  });
+  const res = await graph.invoke(chatInput("laisse tomber le coffre"), cfg);
+  assert.equal(res.steps, 6, "arrêt après 6 échecs, avant le plafond de 12");
+  const notices = res.messages.filter((m: BaseMessage) => m.getType() === "human" && String(m.content).includes("Abandon"));
+  assert.equal(notices.length, 1);
+  assert.ok(res.messages.at(-1) instanceof ToolMessage, "pas de tool_call orphelin");
+});
+
+test("anti-boucle : un succès remet le compteur à zéro", () => {
+  const ok = new ToolMessage({ tool_call_id: "1", content: "Arrivé près de moi" });
+  const ko = (id: string) => new ToolMessage({ tool_call_id: id, content: "Échec : bloqué" });
+  const msgs = [new HumanMessage("va chercher"), ko("a"), ko("b"), ok, ko("c")];
+  assert.deepEqual(failureStreak(msgs), { streak: 1, noticed: false });
+  assert.equal(isFailure(new ToolMessage({ tool_call_id: "x", content: "Aucun lit dans un rayon de 48 blocs" })), true);
 });
 
 test("plafond d'étapes : on s'arrête sans tool_call orphelin", async () => {

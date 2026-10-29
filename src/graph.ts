@@ -56,6 +56,30 @@ export function needsNudge(messages: BaseMessage[]): boolean {
   return !alreadyNudged && !acted;
 }
 
+const FAILURE =
+  /^(REFUSÉ|Erreur|Impossible|Échec|Pas arrivé|Pas encore|Aucun|Je n'ai pas|Je ne |Matériaux manquants|Rien ne|Chemin|Bloc inconnu|Item inconnu)/i;
+const ABANDON_PREFIX = `${NUDGE_PREFIX} Abandon`;
+const NOTICE_AFTER = 3; // échecs d'affilée avant le rappel
+const STOP_AFTER = 6; // échecs d'affilée avant l'arrêt du tour
+
+export function isFailure(m: BaseMessage): boolean {
+  if (m.getType() !== "tool") return false;
+  return (m as ToolMessage).status === "error" || FAILURE.test(typeof m.content === "string" ? m.content : "");
+}
+
+/** Échecs de tools consécutifs depuis la dernière demande du joueur, et rappel déjà envoyé ou non. */
+export function failureStreak(messages: BaseMessage[]): { streak: number; noticed: boolean } {
+  const last = lastUserText(messages);
+  const after = last ? messages.slice(last.index + 1) : messages;
+  let streak = 0;
+  for (const m of after) {
+    if (m.getType() !== "tool") continue;
+    streak = isFailure(m) ? streak + 1 : 0;
+  }
+  const noticed = after.some((m) => m.getType() === "human" && String(m.content).startsWith(ABANDON_PREFIX));
+  return { streak, noticed };
+}
+
 /** Abstractions minimales : en prod ce sont des ChatAnthropic, en test des scripts. */
 export interface AgentModel {
   invoke(messages: BaseMessage[]): Promise<BaseMessage>;
@@ -164,7 +188,7 @@ export function buildGraph(deps: GraphDeps) {
 
   async function actNode(state: S) {
     const last = state.messages.at(-1) as AIMessage;
-    const results: ToolMessage[] = [];
+    const results: BaseMessage[] = [];
     for (const call of last.tool_calls ?? []) {
       const base = { tool_call_id: call.id!, name: call.name };
       const reason = state.blocked[call.id!];
@@ -183,6 +207,15 @@ export function buildGraph(deps: GraphDeps) {
       } catch (err) {
         results.push(new ToolMessage({ ...base, status: "error", content: `Erreur: ${(err as Error).message}` }));
       }
+    }
+    const { streak, noticed } = failureStreak([...state.messages, ...results]);
+    if (state.mode === "chat" && streak >= NOTICE_AFTER && !noticed) {
+      results.push(
+        new HumanMessage(
+          `${ABANDON_PREFIX} : ${streak} actions ratées d'affilée. Cesse d'insister sur cette tâche : explique au joueur en une phrase ` +
+            "ce qui bloque (avec say), propose une alternative, puis arrête-toi. Le dernier message du joueur prime sur tout le reste.",
+        ),
+      );
     }
     return { messages: results, blocked: {} };
   }
@@ -207,7 +240,11 @@ export function buildGraph(deps: GraphDeps) {
     )
     .addEdge("nudge", "plan")
     .addEdge("guard", "act")
-    .addConditionalEdges("act", (s: S) => (s.steps >= deps.maxSteps ? END : "plan"), ["plan", END])
+    .addConditionalEdges(
+      "act",
+      (s: S) => (s.steps >= deps.maxSteps || failureStreak(s.messages).streak >= STOP_AFTER ? END : "plan"),
+      ["plan", END],
+    )
     .compile({ checkpointer: new MemorySaver() });
 }
 

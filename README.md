@@ -42,6 +42,7 @@ flowchart TD
 - **guard** : politique pure (`src/policy.ts`), sans effet de bord. Autorise, refuse, ou **met le graphe en pause** (`interrupt`) pour demander "oui/non" au joueur.
 - **act** : exécute les tools autorisés, renvoie les refus au modèle comme `ToolMessage` d'erreur.
 - **nudge** : si tu demandes une action ("mine", "va", "dors"...) et que le modèle se contente de répondre en texte, il est relancé **une fois** pour qu'il agisse vraiment.
+- **Anti-boucle** : après 3 échecs de tools d'affilée, un rappel lui demande d'abandonner la tâche, d'expliquer ce qui bloque et de proposer une alternative ; après 6, le tour s'arrête. Un succès remet le compteur à zéro. Le prompt précise aussi que le dernier message du joueur prime sur la tâche en cours.
 - **lubie** : quand tu n'as rien demandé depuis `IDLE_AFTER_SECONDS`, un modèle invente une idée ; elle est écartée si `risk = high`, puis exécutée avec une **allowlist réduite** de tools.
 - **Constructions** : `run_blueprint` vérifie l'inventaire, le datapack le revérifie, retire les matériaux (`clear`), puis place la structure. Le LLM choisit *quoi/quand/où*, jamais *comment*.
 
@@ -93,6 +94,7 @@ Pas encore de mémoire structurée (position de la mine, des coffres, objectif c
 | `dig_out` | sortir d'un trou ou d'une mine | profondeur avant/après |
 | `eat` | manger la meilleure nourriture | niveau de faim avant/après |
 | `equip_item` | main ou armure | slot réellement équipé |
+| `chest_contents`, `store_in_chest`, `take_from_chest` | lister, déposer (`*` = toutes les ressources), prendre (64 max) | contenu du coffre, différence d'inventaire |
 | `craft_item`, `give_to_player` | fabriquer, donner | différence d'inventaire |
 | `list_blueprints`, `run_blueprint` | constructions (accord oui/non) | matériaux consommés |
 | `remember`, `emote`, `wander` | journal, animations, balade | – |
@@ -135,6 +137,7 @@ Les `<think>…</think>` des modèles à raisonnement sont retirés des messages
 
 - `viens ici`, `mine ici` / `mine avec ta pioche`, `va chercher du charbon`, `récolte 20 pierres`
 - `regarde autour de toi`, `où est le lit ?`, `mange`, `sors du trou`
+- `qu'y a-t-il dans le coffre ?`, `range tes ressources dans le coffre`, `prends 10 charbons dans le coffre`
 - La nuit : `viens dormir` (il va au lit le plus proche ; la nuit ne passe que si tous les joueurs dorment)
 - `construis une ferme à poules` : il liste les matériaux, les récolte, te demande "je la mets ici ?", puis construit.
 - Ne dis rien pendant 90 s : il improvise.
