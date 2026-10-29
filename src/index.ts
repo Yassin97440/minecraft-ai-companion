@@ -81,9 +81,14 @@ bot.once("spawn", () => {
       const text = last && last.getType() === "ai" ? textOf(last.content) : "";
       if (!ctx.run.saidThisRun && text) bot.chat(text.slice(0, 240));
     } catch (err) {
-      console.error("[agent] erreur:", err);
-      journal.append("error", String((err as Error).message ?? err));
-      bot.chat("Aïe, court-circuit dans mon cerveau... (regarde la console)");
+      const rateLimited = (err as { status?: number }).status === 429;
+      console.error(rateLimited ? "[agent] 429 : le fournisseur du modèle est saturé" : "[agent] erreur:", rateLimited ? "" : err);
+      journal.append("error", rateLimited ? "429 fournisseur saturé" : String((err as Error).message ?? err));
+      bot.chat(
+        rateLimited
+          ? "Le service du modèle est saturé, redis-moi ça dans quelques secondes."
+          : "Aïe, court-circuit dans mon cerveau... (regarde la console)",
+      );
     } finally {
       running = false;
       lastActivity = Date.now();
