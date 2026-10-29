@@ -96,7 +96,7 @@ export function checkToolCall(
       if (opts.autoApproveBuilds) return { kind: "allow" };
       return {
         kind: "approve",
-        question: `Je construis "${args.name}" ici, à cet endroit ? (oui/non)`,
+        question: `Je construis "${args.name}"${args.wall ? ` (murs: ${args.wall})` : args.wood ? ` (bois: ${args.wood})` : ""} ici, à cet endroit ? (oui/non)`,
       };
     }
     default:

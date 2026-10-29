@@ -2,7 +2,8 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import type { Bot } from "mineflayer";
 import pathfinderPkg from "mineflayer-pathfinder";
-import { BLUEPRINTS, missingMaterials } from "./blueprints.js";
+import { BLUEPRINTS, macroArgs, missingMaterials, resolveMaterials, resolveParams } from "./blueprints.js";
+import { WALL_BLOCKS, WOODS } from "./materials.js";
 import { config } from "./config.js";
 import { inHome, isProtectedBlock } from "./policy.js";
 import {
@@ -651,49 +652,76 @@ export function createTools(ctx: Ctx) {
   );
 
   const listBlueprints = tool(
-    async () =>
-      Object.values(BLUEPRINTS)
-        .map(
-          (b) =>
-            `${b.name}: ${b.description} | emprise ${b.footprint.x}x${b.footprint.z} (à droite et devant toi) | matériaux: ` +
-            Object.entries(b.materials)
-              .map(([k, v]) => `${k} x${v}`)
-              .join(", "),
-        )
-        .join("\n"),
+    async () => {
+      const have = (i: string) => itemCount(bot, i);
+      const defaults = resolveParams({}, have);
+      const lines = Object.values(BLUEPRINTS).map((b) => {
+        const mats = defaults.ok ? resolveMaterials(b, defaults.params) : b.materials;
+        return (
+          `${b.name}: ${b.description} | emprise ${b.footprint.x}x${b.footprint.z} (à droite et devant toi) | ` +
+          `paramètres: ${b.params.join(", ")} | matériaux par défaut: ` +
+          Object.entries(mats)
+            .map(([k, v]) => `${k} x${v}`)
+            .join(", ")
+        );
+      });
+      lines.push(
+        `Bois possibles (wood): ${WOODS.join(", ")}.`,
+        `Blocs de mur possibles (wall): ${WALL_BLOCKS.join(", ")}.`,
+        "Sans paramètre, le bois dont tu as le plus de planches est utilisé. Adapte-toi à ce qui t'entoure (ex: acacia dans la savane).",
+      );
+      return lines.join("\n");
+    },
     {
       name: "list_blueprints",
-      description: "Lister les constructions disponibles et leurs matériaux.",
+      description: "Lister les constructions disponibles, leurs matériaux et les bois/pierres utilisables.",
       schema: z.object({}),
     },
   );
 
   const runBlueprint = tool(
-    async ({ name }) => {
+    async ({ name, wood, wall }) => {
       const bp = BLUEPRINTS[name];
       if (!bp) return `Blueprint inconnu: "${name}". Disponibles: ${Object.keys(BLUEPRINTS).join(", ")}.`;
 
-      const missing = missingMaterials(bp, (i) => itemCount(bot, i));
+      const have = (i: string) => itemCount(bot, i);
+      const resolved = resolveParams({ wood, wall }, have);
+      if (!resolved.ok) return resolved.error;
+      const materials = resolveMaterials(bp, resolved.params);
+
+      const missing = missingMaterials(materials, have);
       if (Object.keys(missing).length) {
-        return `Matériaux manquants: ${Object.entries(missing).map(([k, v]) => `${k} x${v}`).join(", ")}. Récolte/crafte d'abord.`;
+        return `Matériaux manquants: ${Object.entries(missing).map(([k, v]) => `${k} x${v}`).join(", ")}. Récolte/crafte d'abord (ou choisis un autre bois/bloc avec wood/wall).`;
       }
 
-      const before = Object.keys(bp.materials).map((i) => itemCount(bot, i));
-      bot.chat(`/function ${bp.fn}`);
+      const items = Object.keys(materials);
+      const before = items.map(have);
+      bot.chat(`/function ${bp.fn} ${macroArgs(resolved.params)}`);
       await sleep(1500);
-      const after = Object.keys(bp.materials).map((i) => itemCount(bot, i));
+      const after = items.map(have);
       const consumed = before.some((b, i) => after[i] < b);
       if (!consumed) {
-        return "Rien ne s'est passé. Le datapack est-il installé et le bot est-il op (niveau 2+) ?";
+        return "Rien ne s'est passé. Le datapack est-il installé (/reload) et le bot est-il op (niveau 2+) ?";
       }
-      journal.append("build", `a construit ${name} vers ${Math.round(bot.entity.position.x)}, ${Math.round(bot.entity.position.z)}`);
-      return `Construction "${name}" terminée. Matériaux consommés.`;
+      const used = items
+        .map((it, i) => ({ it, n: before[i] - after[i] }))
+        .filter((x) => x.n > 0)
+        .map((x) => `${x.it} x${x.n}`)
+        .join(", ");
+      journal.append("build", `a construit ${name} (${used}) vers ${Math.round(bot.entity.position.x)}, ${Math.round(bot.entity.position.z)}`);
+      return `Construction "${name}" terminée. Matériaux consommés: ${used}.`;
     },
     {
       name: "run_blueprint",
       description:
-        "Construire un blueprint à l'endroit où tu te trouves. Consomme les matériaux de ton inventaire. Demande l'accord du joueur.",
-      schema: z.object({ name: z.string() }),
+        "Construire un blueprint à l'endroit où tu te trouves. Consomme les matériaux de ton inventaire. Demande l'accord du joueur. " +
+        "Optionnel: wood (acacia, spruce, birch...) et wall (ex: cobblestone, stone_bricks, acacia_planks) pour choisir le matériau ; " +
+        "par défaut, le bois dont tu as le plus de planches.",
+      schema: z.object({
+        name: z.string(),
+        wood: z.string().optional().describe("Famille de bois : porte, clôtures, sol de la ferme. Ex: acacia"),
+        wall: z.string().optional().describe("Bloc des murs de la cabane. Ex: acacia_planks, cobblestone, stone_bricks"),
+      }),
     },
   );
 

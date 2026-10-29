@@ -57,7 +57,7 @@ export function needsNudge(messages: BaseMessage[]): boolean {
 }
 
 const FAILURE =
-  /^(REFUSÉ|Erreur|Impossible|Échec|Pas arrivé|Pas encore|Aucun|Je n'ai pas|Je ne |Matériaux manquants|Rien ne|Chemin|Bloc inconnu|Item inconnu)/i;
+  /^(REFUSÉ|Erreur|Impossible|Échec|Pas arrivé|Pas encore|Aucun|Je n'ai pas|Je ne |Matériaux manquants|Rien ne|Chemin|Bloc inconnu|Item inconnu|Matériau inconnu)/i;
 const ABANDON_PREFIX = `${NUDGE_PREFIX} Abandon`;
 const NOTICE_AFTER = 3; // échecs d'affilée avant le rappel
 const STOP_AFTER = 6; // échecs d'affilée avant l'arrêt du tour
