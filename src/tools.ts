@@ -9,7 +9,10 @@ import { BLUEPRINTS, footprintBox, macroArgs, missingMaterials, resolveMaterials
 import { WALL_BLOCKS, WOODS } from "./materials.js";
 import { config } from "./config.js";
 import { inHome, isProtectedBlock } from "./policy.js";
+import { eatBest, fight, flee, gearUp, shelter } from "./survival.js";
+import { bestTool, freeSpotNear as freeSpotFor, goto, placeAt as placeBlockAt, sleep, type V3 } from "./actions.js";
 import {
+  digHazard,
   findPlayer,
   formatPos,
   holeDepth,
@@ -25,26 +28,6 @@ import {
 } from "./world.js";
 
 const { goals } = pathfinderPkg;
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-async function goto(bot: Bot, goal: any, timeoutMs = 30_000) {
-  if (bot.isSleeping) await bot.wake().catch(() => {});
-  const timer = setTimeout(() => bot.pathfinder.stop(), timeoutMs);
-  try {
-    await bot.pathfinder.goto(goal);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const TIERS = ["netherite", "diamond", "iron", "stone", "golden", "wooden"];
-
-function bestTool(bot: Bot, kind: string) {
-  const candidates = bot.inventory.items().filter((i) => i.name.endsWith(`_${kind}`));
-  candidates.sort((a, b) => TIERS.findIndex((t) => a.name.startsWith(t)) - TIERS.findIndex((t) => b.name.startsWith(t)));
-  return candidates[0];
-}
 
 async function equipBestTool(bot: Bot, block: { material?: string | null }) {
   const mat = block.material ?? "";
@@ -71,7 +54,6 @@ const ARMOR_SLOTS: [string, "head" | "torso" | "legs" | "feet"][] = [
   ["_leggings", "legs"],
   ["_boots", "feet"],
 ];
-const BAD_FOOD = new Set(["rotten_flesh", "spider_eye", "poisonous_potato", "pufferfish", "chorus_fruit", "suspicious_stew"]);
 
 export function createTools(ctx: Ctx) {
   const { bot, journal, memory } = ctx;
@@ -80,58 +62,8 @@ export function createTools(ctx: Ctx) {
     return Math.round(Math.hypot(p.x - x, p.y - y, p.z - z));
   };
 
-  type V3 = ReturnType<Bot["entity"]["position"]["floored"]>;
-  // Côtés d'abord, dessous ensuite, dessus en dernier : une torche ne tient pas au plafond.
-  const NEIGHBORS: [number, number, number][] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, -1, 0], [0, 1, 0]];
-
-  /** Pose `item` sur la case vide `pos`, en s'appuyant sur un bloc plein voisin. Renvoie null si posé, sinon la raison de l'échec. */
-  async function placeAt(item: string, pos: V3): Promise<string | null> {
-    const target = bot.blockAt(pos);
-    if (!target) return "zone non chargée";
-    if (!["air", "cave_air", "water", "lava"].includes(target.name) && !target.name.endsWith("_air")) {
-      return `la case est occupée par ${target.name}`;
-    }
-    const stack = bot.inventory.items().find((i) => i.name === item);
-    if (!stack) return `je n'ai pas de ${item}`;
-    const me = bot.entity.position.floored();
-    if (pos.equals(me) || pos.equals(me.offset(0, 1, 0)) && !item.includes("torch")) return "je suis sur cette case";
-
-    const ref = NEIGHBORS.map(([dx, dy, dz]) => bot.blockAt(pos.offset(dx, dy, dz))).find((b) => b && b.boundingBox === "block");
-    if (!ref) return "aucun bloc plein contre lequel poser";
-
-    if (dist(pos.x, pos.y, pos.z) > 4) {
-      await goto(bot, new goals.GoalNear(pos.x, pos.y, pos.z, 3), 15_000).catch(() => {});
-      if (dist(pos.x, pos.y, pos.z) > 5) return "trop loin et inaccessible";
-    }
-    try {
-      await bot.equip(stack, "hand");
-      await bot.lookAt(pos.offset(0.5, 0.5, 0.5));
-      await bot.placeBlock(ref, pos.minus(ref.position));
-    } catch (err) {
-      return (err as Error).message;
-    }
-    await sleep(200);
-    const now = bot.blockAt(pos)?.name ?? "";
-    return now === "air" || now === "water" || now === "lava" ? "le bloc n'a pas été posé" : null;
-  }
-
-  /** Une case libre (pieds et tête vides, sol plein) à 1-3 blocs du bot, de préférence devant lui. */
-  function freeSpotNear(): V3 | null {
-    const me = bot.entity.position.floored();
-    const fx = Math.round(-Math.sin(bot.entity.yaw));
-    const fz = Math.round(-Math.cos(bot.entity.yaw));
-    const ring: [number, number][] = [[fx * 2, fz * 2], [fx, fz], [fx * 3, fz * 3], [2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2]];
-    for (const [dx, dz] of ring) {
-      for (const dy of [0, 1, -1]) {
-        const p = me.offset(dx, dy, dz);
-        const feet = bot.blockAt(p);
-        const head = bot.blockAt(p.offset(0, 1, 0));
-        const floor = bot.blockAt(p.offset(0, -1, 0));
-        if (feet?.name === "air" && head?.name === "air" && floor?.boundingBox === "block") return p;
-      }
-    }
-    return null;
-  }
+  const placeAt = (item: string, pos: V3) => placeBlockAt(bot, item, pos);
+  const freeSpotNear = () => freeSpotFor(bot);
 
   const say = tool(
     async ({ message }) => {
@@ -291,25 +223,11 @@ export function createTools(ctx: Ctx) {
     },
   );
 
-  const eat = tool(
-    async () => {
-      if (bot.food >= 20) return "Je n'ai pas faim (20/20).";
-      const foods = bot.inventory
-        .items()
-        .filter((i) => bot.registry.foods[i.type] && !BAD_FOOD.has(i.name))
-        .sort((a, b) => bot.registry.foods[b.type].foodPoints - bot.registry.foods[a.type].foodPoints);
-      if (!foods.length) return "Je n'ai aucune nourriture mangeable. Il faut chasser (look_around montre les animaux) ou récolter.";
-      const before = bot.food;
-      await bot.equip(foods[0], "hand");
-      await bot.consume();
-      return bot.food > before ? `J'ai mangé ${foods[0].name} : faim ${Math.round(before)} -> ${Math.round(bot.food)}.` : `Échec : ma faim n'a pas changé (${Math.round(bot.food)}/20).`;
-    },
-    {
-      name: "eat",
-      description: "Manger la meilleure nourriture de l'inventaire.",
-      schema: z.object({}),
-    },
-  );
+  const eat = tool(async () => eatBest(bot), {
+    name: "eat",
+    description: "Manger la meilleure nourriture de l'inventaire.",
+    schema: z.object({}),
+  });
 
   const sleepInBed = tool(
     async () => {
@@ -376,6 +294,7 @@ export function createTools(ctx: Ctx) {
       let dug = 0;
       let last: { x: number; y: number; z: number } | null = null;
       let why = "";
+      const unsafe = new Set<string>();
 
       for (let i = 0; i < count; i++) {
         if (ctx.run.interrupted) {
@@ -384,7 +303,7 @@ export function createTools(ctx: Ctx) {
         }
         const candidates = bot
           .findBlocks({ matching: def.id, maxDistance: 48, count: 24 })
-          .filter((p) => !inHome(p))
+          .filter((p) => !inHome(p) && !unsafe.has(`${p.x},${p.y},${p.z}`))
           .sort((a, b) => a.distanceTo(bot.entity.position) - b.distanceTo(bot.entity.position));
         const pos = candidates[0];
         if (!pos) {
@@ -400,6 +319,13 @@ export function createTools(ctx: Ctx) {
         }
         const target = bot.blockAt(pos);
         if (!target || target.type !== def.id) continue;
+        const hazard = digHazard(bot, target.position);
+        if (hazard) {
+          unsafe.add(`${pos.x},${pos.y},${pos.z}`);
+          why = `bloc dangereux ignoré : ${hazard}`;
+          i--;
+          continue;
+        }
         await equipBestTool(bot, target);
         if (target.harvestTools && !(bot.heldItem && target.harvestTools[bot.heldItem.type])) {
           why = "il me faut un meilleur outil";
@@ -478,6 +404,7 @@ export function createTools(ctx: Ctx) {
             else if (liquid(b.name)) blocked = `${b.name} devant`;
             else if (isProtectedBlock(b.name)) blocked = `${b.name} protégé`;
             else if (inHome(start.offset(x, y, z))) blocked = "zone protégée";
+            else if (b.boundingBox === "block" && digHazard(bot, start.offset(x, y, z))) blocked = `danger : ${digHazard(bot, start.offset(x, y, z))}`;
             if (blocked) break;
           }
           const floor = at(nx, ny - 1, nz);
@@ -512,10 +439,7 @@ export function createTools(ctx: Ctx) {
           for (const [ax, ay, az] of around) {
             const ore = at(ox + ax, oy + ay, oz + az);
             if (!ore || !(ore.name.endsWith("_ore") || ore.name === "ancient_debris")) continue;
-            const wet = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].some(([bx, by, bz]) =>
-              liquid(at(ox + ax + bx, oy + ay + by, oz + az + bz)?.name),
-            );
-            if (wet) continue;
+            if (digHazard(bot, ore.position)) continue;
             await bot.dig(ore).catch(() => {});
             dug++;
           }
@@ -895,6 +819,33 @@ export function createTools(ctx: Ctx) {
     },
   );
 
+  const fightTool = tool(async () => fight(bot), {
+    name: "fight",
+    description:
+      "Combattre les monstres hostiles proches (épée ou hache, armure équipée automatiquement). Se retire si la vie tombe trop bas. " +
+      "À éviter sans arme ni armure : préfère flee ou take_shelter. Ne s'attaque jamais aux joueurs ni aux animaux.",
+    schema: z.object({}),
+  });
+
+  const fleeTool = tool(async () => flee(bot), {
+    name: "flee",
+    description: "Fuir les monstres proches (creeper, groupe, vie basse). Court à l'opposé pendant quelques secondes.",
+    schema: z.object({}),
+  });
+
+  const takeShelter = tool(async () => shelter(bot), {
+    name: "take_shelter",
+    description:
+      "S'enfermer dans un abri de 13 blocs pleins (cobblestone, terre, planches...) autour de soi pour échapper aux monstres ou passer la nuit. Pour en sortir : casser un bloc de l'abri.",
+    schema: z.object({}),
+  });
+
+  const gearUpTool = tool(async () => gearUp(bot), {
+    name: "gear_up",
+    description: "Équiper la meilleure armure, un bouclier et la meilleure arme de l'inventaire. À faire après avoir récupéré ou crafté de l'équipement.",
+    schema: z.object({}),
+  });
+
   /**
    * Exécute des commandes Minecraft (le bot est op). Serveur local connu : un seul fichier de fonction généré puis
    * `/reload` + `/function` (quelques secondes). Sinon : une commande de chat par seconde (le serveur expulse pour spam au-delà).
@@ -1082,6 +1033,10 @@ export function createTools(ctx: Ctx) {
     equipItem,
     placeBlockTool,
     pickupItems,
+    fightTool,
+    fleeTool,
+    takeShelter,
+    gearUpTool,
     eat,
     sleepInBed,
     digOut,

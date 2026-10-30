@@ -81,6 +81,35 @@ export function surfaceY(bot: Bot): number {
   return surroundingTop(bot);
 }
 
+/** Blocs qui tombent quand on retire ce qui les soutient. */
+export const isGravityBlock = (name: string) =>
+  ["sand", "red_sand", "gravel", "suspicious_sand", "suspicious_gravel", "anvil", "chipped_anvil", "damaged_anvil"].includes(name) ||
+  name.endsWith("_concrete_powder");
+
+/**
+ * Casser un bloc est dangereux si un bloc qui tombe est au-dessus (éboulement, étouffement),
+ * ou si de la lave/de l'eau le touche (elle s'écoule dans le trou). Pure : testable sans serveur.
+ */
+export function digHazardFrom(above: string | undefined, neighbors: (string | undefined)[]): string | null {
+  if (above && isGravityBlock(above)) return `${above} au-dessus (éboulement)`;
+  const liquid = neighbors.find((n) => n === "lava" || n === "water");
+  return liquid ? `${liquid} contre ce bloc (elle s'écoulerait)` : null;
+}
+
+export function digHazard(bot: Bot, pos: { offset(x: number, y: number, z: number): any }): string | null {
+  const name = (dx: number, dy: number, dz: number) => bot.blockAt(pos.offset(dx, dy, dz))?.name;
+  return digHazardFrom(name(0, 1, 0), [name(1, 0, 0), name(-1, 0, 0), name(0, 0, 1), name(0, 0, -1), name(0, 1, 0), name(0, -1, 0)]);
+}
+
+const NEUTRAL = new Set(["enderman", "zombified_piglin", "piglin", "iron_golem", "wolf", "bee", "llama", "polar_bear", "dolphin", "panda", "goat"]);
+
+/** Monstres hostiles proches (les créatures neutres, qui n'attaquent que si on les provoque, sont exclues). */
+export function threats(bot: Bot, range = 16) {
+  return Object.values(bot.entities)
+    .filter((e) => e !== bot.entity && e.type === "hostile" && !NEUTRAL.has(e.name ?? "") && e.position.distanceTo(bot.entity.position) < range)
+    .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
+}
+
 export function hostiles(bot: Bot, range = 16) {
   return Object.values(bot.entities)
     .filter((e) => e !== bot.entity && e.type === "hostile" && e.position.distanceTo(bot.entity.position) < range)

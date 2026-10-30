@@ -98,6 +98,7 @@ Le journal (`data/journal.json`) reste l'historique brut des événements.
 | `go_to_player`, `go_to` | se déplacer | distance restante ("Arrivé" ou "Pas arrivé") |
 | `collect_block` | miner/couper un type de bloc | différence d'inventaire |
 | `mine_tunnel` | tunnel ou escalier descendant à la pioche, ramasse les minerais voisins | différence d'inventaire, raison d'arrêt (lave, eau, vide, monstre, vie basse) |
+| `fight`, `flee`, `take_shelter`, `gear_up` | combattre, fuir, s'abriter, s'équiper (aussi déclenchés par les réflexes) | vie avant/après, monstres éliminés, blocs d'abri réellement posés |
 | `place_block` | poser établi, four, coffre, torche, bloc (devant lui ou à des coordonnées) | case réellement occupée par le bloc ensuite |
 | `pickup_items` | ramasser les objets au sol (après une mort, des drops) | différence d'inventaire |
 | `sleep_in_bed` | aller dormir (nuit ou orage) | `bot.isSleeping` |
@@ -113,6 +114,27 @@ Le journal (`data/journal.json`) reste l'historique brut des événements.
 | `emote`, `wander` | animations, balade | – |
 
 Garde-fous (`src/policy.ts`) : blocs protégés (coffres, fours, lits...), zone `HOME_*` intouchable, longueur de tunnel plafonnée, mode autonome limité à une allowlist, seul `OWNER_USERNAME` donne des ordres.
+
+## Instinct de survie
+
+Un LLM met plusieurs secondes à décider ; la lave, un creeper ou du gravier sur la tête n'attendent pas. Une **couche de réflexes déterministes, hors LLM** (`src/survival.ts`) surveille le bot toutes les 500 ms :
+
+```
+état du bot (vie, faim, lave, feu, tête bloquée, monstres, arme, nourriture, blocs)
+   → decideReflex (fonction pure, testée)
+        lave / feu            → escape_fire  : va à la case sûre la plus proche (eau si on brûle)
+        bloc sur la tête      → clear_head   : casse le gravier qui l'écrase
+        creeper à < 7 blocs   → flee
+        monstre à < 7 blocs   → fight (armé, vie ≥ 8, ≤ 3 monstres) | shelter (13 blocs) | flee
+        vie ≤ 6               → flee | shelter (jamais de combat)
+        faim ≤ 10, calme      → eat
+   → coupe la tâche en cours de l'agent, exécute, journalise, puis relance la mission si besoin
+```
+
+- **Creuser sans danger** : `collect_block` et `mine_tunnel` refusent de casser un bloc sous du gravier/sable (éboulement), ou touchant de la lave/de l'eau, et le disent.
+- **Combat** : `fight` équipe la meilleure arme, l'armure et le bouclier (`gear_up`), attaque avec le bon délai, ne cible jamais joueurs ni animaux, et se retire si la vie tombe à 6.
+- **Abri** : `take_shelter` pose 13 blocs autour de lui (4 côtés sur 2 de haut, puis un toit).
+- Les mêmes actions sont des tools que l'agent peut choisir (`fight`, `flee`, `take_shelter`, `gear_up`, `eat`) ; les réflexes ne sont que le filet de sécurité.
 
 ## Construire librement
 

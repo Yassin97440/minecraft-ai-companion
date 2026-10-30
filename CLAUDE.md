@@ -54,6 +54,7 @@ Conventions qui comptent :
 - Perception : `snapshot()` (position, vie, faim, heure, main, relief/trou, menaces, inventaire), `look_around`, `find_block`.
 - Actions : déplacement, `collect_block`, `mine_tunnel` (tunnel/escalier avec arrêts de sécurité), `sleep_in_bed`, `dig_out`, `eat`, `equip_item`, craft, don, coffres (`chest_contents`, `store_in_chest`, `take_from_chest`), blueprints (accord oui/non).
 - Débrouillardise : `place_block` (établi, torche, coffre...), `craft_item` pose son propre établi, `mine_tunnel` pose une torche tous les 6 pas, `pickup_items` ; à la mort, la position est mémorisée (`mort`) et l'agent est relancé pour récupérer ses affaires (< 5 min).
+- Survie : `src/survival.ts` = **réflexes hors LLM** (`decideReflex` pure + superviseur 500 ms : lave/feu, gravier sur la tête, creeper, combat/fuite/abri selon l'équipement, manger) ; tools `fight`, `flee`, `take_shelter`, `gear_up` ; `collect_block`/`mine_tunnel` refusent les blocs dangereux (gravier au-dessus, lave/eau contre le bloc). Helpers partagés dans `src/actions.ts`.
 - Contrôle : relance « agis, ne parle pas » (`nudge`), anti-boucle (rappel à 3 échecs d'affilée, arrêt à 6), plafonds d'étapes, 429 géré proprement.
 - Mémoire : `Memory` durable (`data/memory.json`) alimentée automatiquement (lit, coffres, entrée de mine) et par `remember`/`forget` ; `Journal` brut.
 - Missions : `start_mission` / `mission_progress` / `end_mission`, boucle `continue` (mode chat uniquement), reprise de main par le joueur.
@@ -79,9 +80,9 @@ Chaque étape est aussi un exercice d'agentique ; garder le même découpage : *
    - Filet de sécurité des missions en code : `stop`/`laisse tomber`/`annule` abandonne la mission ; expiration d'une mission inactive.
    - **Observabilité** : compteur de requêtes/tokens/latence par tour (puis LangSmith ou traces maison). Mesurer avant d'optimiser.
    - Valider en jeu chaque tool et corriger ce qui casse. Commiter par petits lots.
-2. **Couche de réflexes déterministes (survie)**
-   - Un superviseur événementiel *hors LLM* (santé basse, faim, nuit, monstre proche) qui interrompt la tâche et déclenche manger / fuir / dormir / se mettre à l'abri, puis rend la main. Concept : architecture **hybride réactive + délibérative**.
-   - Outils manquants : `take_shelter`, combat avec arme (avec garde-fous/approbation), chasse pour la nourriture, torches dans les tunnels, retour à la base.
+2. **Couche de réflexes déterministes (survie)** — *première version faite, à valider en jeu*
+   - Fait : superviseur 500 ms (lave/feu, gravier sur la tête, monstres → combat/fuite/abri, faim), creusage prudent, combat, abri.
+   - Reste : chasse pour la nourriture, réflexe « nuit » (aller dormir/s'abriter), chute dans le vide, noyade, projectiles (squelettes : se mettre à couvert), armes à distance, retour à la base, calibrage des seuils en jeu, tests d'intégration avec un faux bot.
 3. **Autonomie dirigée par objectifs**
    - Un **générateur d'objectifs** de survie (arbre technologique : bois → outils en bois → pierre → nourriture → abri → fer…) qui crée des missions seul quand le joueur ne demande rien, avec budget et garde-fous. Remplace/complète les « lubies » pour la progression ; les lubies restent la couche d'humour.
    - Planification explicite : nœud *planificateur* qui décompose, nœud *exécuteur*, éventuellement un *critique* qui vérifie l'objectif (sous-graphes LangGraph).

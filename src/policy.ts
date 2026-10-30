@@ -19,6 +19,8 @@ export const IDLE_TOOLS = new Set([
   "emote",
   "equip_item",
   "pickup_items",
+  "gear_up",
+  "flee",
   "eat",
   "dig_out",
   "collect_block",

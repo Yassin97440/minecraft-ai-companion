@@ -5,6 +5,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { config } from "./config.js";
 import { buildGraph, WhimSchema } from "./graph.js";
 import { parseApproval } from "./approval.js";
+import { startSurvival } from "./survival.js";
 import { assertLlmConfigured, createAgentModel, createWhimModel } from "./llm.js";
 import { Journal, Memory } from "./memory.js";
 import { IDLE_TOOLS } from "./policy.js";
@@ -136,6 +137,29 @@ bot.once("spawn", () => {
     }
     await run({ messages: [new HumanMessage(`${username}: ${text}`)], mode: "chat", steps: 0 });
   }
+
+  // Instinct de survie : des réflexes hors LLM (lave, gravier sur la tête, monstres, faim) qui coupent ce que fait l'agent.
+  let lastReflexChat = 0;
+  startSurvival(bot, {
+    onDanger: (reflex) => {
+      if (reflex.action !== "eat") ctx.run.interrupted = true;
+    },
+    onReflex: (reflex, result) => {
+      journal.append("reflex", `${reflex.action} (${reflex.reason}) : ${result}`.slice(0, 280));
+      console.log(`[survie] ${reflex.action} - ${reflex.reason} => ${result}`);
+      const talks = reflex.action === "fight" || reflex.action === "flee" || reflex.action === "shelter" || reflex.action === "escape_fire";
+      if (talks && Date.now() - lastReflexChat > 20_000) {
+        lastReflexChat = Date.now();
+        bot.chat(
+          reflex.action === "fight" ? "Un monstre, je m'en occupe !" : reflex.action === "shelter" ? "Je m'abrite !" : reflex.action === "flee" ? "Danger, je me replie !" : "Aïe, je sors du feu !",
+        );
+      }
+      // Le danger est passé : si une mission était en cours, l'agent la reprend.
+      if (memory.activeMission() && reflex.action !== "eat") {
+        void onInstruction("Système", "Le danger est écarté. Reprends ta mission en cours (voir ta mémoire), en restant prudent (look_around d'abord).");
+      }
+    },
+  });
 
   // Mort : on note où (l'inventaire tombe sur place et disparaît au bout de 5 min), puis on relance l'agent pour qu'il récupère ses affaires.
   let lastDeath: { x: number; y: number; z: number; at: number } | null = null;
