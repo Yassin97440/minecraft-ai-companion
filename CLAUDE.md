@@ -49,6 +49,18 @@ Conventions qui comptent :
 - Un nom de nœud ne doit pas égaler un canal d'état ; `resume` d'un `interrupt` ne doit pas être falsy (`{ approved }`).
 - Datapack 1.21.x : dossier `function` au singulier ; le bot doit être op pour `/function`.
 
+## Workflow par spécifications (Spec Kit)
+
+Le projet utilise [GitHub Spec Kit](https://github.com/github/spec-kit) (CLI `specify` 1.2.5, intégration Claude, scripts PowerShell). Pour une fonctionnalité non triviale, partir d'une spec plutôt que du code :
+
+1. `/speckit-constitution` : principes du projet (`.specify/memory/constitution.md`), à remplir une fois à partir des conventions ci-dessous.
+2. `/speckit-specify` : décrire le QUOI et le POURQUOI (comportement attendu, scénarios, critères de réussite), pas le comment.
+3. `/speckit-clarify` (optionnel) puis `/speckit-plan` : choix techniques (LangGraph, Mineflayer...), contrats, risques.
+4. `/speckit-tasks` puis `/speckit-analyze` (optionnel) : tâches ordonnées et contrôle de cohérence.
+5. `/speckit-implement` : exécution. `/speckit-converge` : comparer le code à la spec et ajouter le reste en tâches.
+
+Fichiers : skills dans `.claude/skills/speckit-*`, modèles et scripts dans `.specify/`, specs générées dans `specs/`. Mettre à jour la CLI : `uv tool install --force specify-cli`. Si `specify` n'est pas dans le PATH : `$env:USERPROFILE\.local\bin\specify.exe`.
+
 ## État actuel (fait)
 
 - Perception : `snapshot()` (position, vie, faim, heure, main, relief/trou, menaces, inventaire), `look_around`, `find_block`.
