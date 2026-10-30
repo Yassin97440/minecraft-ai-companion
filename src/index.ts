@@ -10,6 +10,7 @@ import { assertLlmConfigured, createAgentModel, createWhimModel } from "./llm.js
 import { Journal, Memory } from "./memory.js";
 import { IDLE_TOOLS } from "./policy.js";
 import { createTools } from "./tools.js";
+import { Tracer } from "./trace.js";
 import { snapshot, type Ctx } from "./world.js";
 
 const { pathfinder, Movements } = pathfinderPkg;
@@ -26,6 +27,9 @@ function textOf(content: unknown): string {
 
 assertLlmConfigured();
 console.log(`[llm] ${config.llm.provider} / ${config.llm.model} (lubies: ${config.llm.idleModel})`);
+
+const tracer = new Tracer(config.trace);
+if (config.trace.enabled) console.log(`[trace] activé → ${config.trace.dir} (prompts complets: ${config.trace.full})`);
 
 const bot = mineflayer.createBot({
   host: config.mc.host,
@@ -47,12 +51,13 @@ bot.once("spawn", () => {
   bot.pathfinder.setMovements(new Movements(bot));
   console.log(`[bot] ${bot.username} connecté sur ${config.mc.host}:${config.mc.port}`);
 
-  const tools = createTools(ctx);
+  const tools = tracer.wrapTools(createTools(ctx));
+  const idleTools = tools.filter((t) => IDLE_TOOLS.has(t.name));
   const graph = buildGraph({
     tools,
-    chatModel: createAgentModel(tools),
-    idleModel: createAgentModel(tools.filter((t) => IDLE_TOOLS.has(t.name))),
-    whimModel: createWhimModel(WhimSchema),
+    chatModel: tracer.wrapModel(createAgentModel(tools), "chat", tools),
+    idleModel: tracer.wrapModel(createAgentModel(idleTools), "idle", idleTools),
+    whimModel: tracer.wrapModel(createWhimModel(WhimSchema), "whim"),
     world: () => snapshot(bot),
     journal,
     memory,
@@ -81,6 +86,8 @@ bot.once("spawn", () => {
     running = true;
     ctx.run.saidThisRun = false;
     ctx.run.interrupted = false;
+    const first = (input as { messages?: HumanMessage[] })?.messages?.[0];
+    tracer.startRun(input instanceof Command ? "accord" : (input as { mode?: string })?.mode ?? "chat", String(first?.content ?? ""));
     try {
       const result = await graph.invoke(input as any, thread);
 
@@ -123,6 +130,7 @@ bot.once("spawn", () => {
           : "Aïe, court-circuit dans mon cerveau... (regarde la console)",
       );
     } finally {
+      tracer.endRun();
       running = false;
       lastActivity = Date.now();
       const next = queue.shift();

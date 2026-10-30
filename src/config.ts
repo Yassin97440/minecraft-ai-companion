@@ -34,6 +34,12 @@ export const config = {
       "Ton humour est sec et discret : une petite vanne de temps en temps, jamais à chaque message. " +
       "Seul petit travers : une tendresse pour les poules.",
   )!,
+  // Observabilité : un fichier JSONL par session (voir src/trace.ts). TRACE=false coupe tout ; TRACE_FULL=false n'écrit que les mesures, pas les prompts.
+  trace: {
+    enabled: env("TRACE", "true") !== "false",
+    full: env("TRACE_FULL", "true") !== "false",
+    dir: env("TRACE_DIR", join("data", "traces"))!,
+  },
   idle: {
     enabled: env("IDLE_ENABLED", "true") === "true",
     afterSeconds: num("IDLE_AFTER_SECONDS", 90),

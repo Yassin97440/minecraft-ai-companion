@@ -9,6 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
+    "trace-report": "tsx src/trace-report.ts",
     "sync-datapack": "node scripts/sync-datapack.mjs"
   },
   "dependencies": {

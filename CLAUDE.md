@@ -39,6 +39,7 @@ START → (idle ? lubie : plan) ; plan → guard → act → plan …
 | `src/llm.ts`, `src/config.ts` | fournisseurs/modèles, variables `.env` |
 | `src/blueprints.ts`, `datapack/companion/` | constructions toutes faites (ferme à poules, cabane 10x15 avec sol en bois) |
 | `src/construction.ts` | **langage de construction** : `PlanSchema`, `validatePlan` (listes fermées, bornes, coût, habitabilité par flood-fill), `planCommands`, `verifyGrid` ; tool `build_structure` (plan → validation → accord → exécution → vérification) |
+| `src/trace.ts`, `src/trace-report.ts` | **observabilité** : `Tracer` enveloppe les modèles (`wrapModel`) et les tools (`wrapTools`) ; un JSONL par session dans `data/traces/` (prompt complet envoyé, réponse, tokens réels ou estimés, latence, résultat des tools, résumé par run) ; `npm run trace-report [--all]` agrège |
 | `test/*.test.ts` | politique, graphe, mémoire, câblage fournisseurs — **modèles scriptés, sans réseau ni Minecraft** |
 
 Conventions qui comptent :
@@ -77,7 +78,7 @@ Fichiers : skills dans `.claude/skills/speckit-*`, modèles et scripts dans `.sp
 ## Problèmes connus
 
 - **Qualité du modèle** : les petits modèles (gpt-oss-20b) hallucinent et bavardent ; un modèle plus gros avec bon tool calling change tout. Le 429 OpenRouter vient du pool partagé du fournisseur (clé BYOK Google ou provider `google` direct pour le contourner).
-- **Coût en requêtes** : un tour = 1 requête LLM par tool appelé (jusqu'à 12, 60 en mission), chaque requête renvoie prompt + ~25 schémas de tools + historique (≤ 40 messages). Pas encore mesuré.
+- **Coût en requêtes** : un tour = 1 requête LLM par tool appelé (jusqu'à 12, 60 en mission), chaque requête renvoie prompt + ~25 schémas de tools + historique (≤ 40 messages). Mesurable via `npm run trace-report` (pas encore mesuré en jeu).
 - Fin de mission **dépend du modèle** (pas de filet en code).
 - Les lubies (sortie structurée) échouent parfois avec les petits modèles (géré : on saute).
 - L'historique du graphe est en RAM (`MemorySaver`) et tronqué à 40 messages ; seule `Memory`/`Journal` survivent au redémarrage.
@@ -90,7 +91,7 @@ Chaque étape est aussi un exercice d'agentique ; garder le même découpage : *
 
 1. **Fiabiliser l'existant** (prochaine session probable)
    - Filet de sécurité des missions en code : `stop`/`laisse tomber`/`annule` abandonne la mission ; expiration d'une mission inactive.
-   - **Observabilité** : compteur de requêtes/tokens/latence par tour (puis LangSmith ou traces maison). Mesurer avant d'optimiser.
+   - **Observabilité** : *première version faite* (`src/trace.ts`, voir tableau) : tokens/latence/prompts par appel et par run. Reste : l'utiliser en jeu pour mesurer le coût réel d'un tour, puis éventuellement LangSmith. Mesurer avant d'optimiser.
    - Valider en jeu chaque tool et corriger ce qui casse. Commiter par petits lots.
 2. **Couche de réflexes déterministes (survie)** — *première version faite, à valider en jeu*
    - Fait : superviseur 500 ms (lave/feu, gravier sur la tête, monstres → combat/fuite/abri, faim), creusage prudent, combat, abri.
