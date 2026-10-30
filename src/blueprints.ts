@@ -20,9 +20,26 @@ export type Blueprint = {
   materials: Record<string, number>;
   /** Paramètres que le modèle peut choisir. */
   params: BlueprintParam[];
-  /** Emprise approximative, pour que l'agent choisisse un endroit dégagé. */
+  /** Emprise (x, z) : la structure s'étend vers +x et +z depuis le point décalé de BLUEPRINT_OFFSET. */
   footprint: { x: number; z: number };
+  /** Blocs occupés au-dessus du sol (toit compris) et sous le sol (fondation/sol posé en y-1). */
+  height: number;
+  below: number;
 };
+
+/** Décalage devant/à droite du bot, pour ne pas l'emmurer (doit correspondre à `positioned ~2 ~ ~2` du datapack). */
+export const BLUEPRINT_OFFSET = 2;
+
+/** Parallélépipède (coordonnées de blocs, bornes incluses) occupé par un blueprint lancé depuis `pos`. */
+export function footprintBox(bp: Blueprint, pos: { x: number; y: number; z: number }) {
+  const x0 = Math.floor(pos.x + BLUEPRINT_OFFSET);
+  const y0 = Math.floor(pos.y);
+  const z0 = Math.floor(pos.z + BLUEPRINT_OFFSET);
+  return {
+    min: { x: x0, y: y0 - bp.below, z: z0 },
+    max: { x: x0 + bp.footprint.x - 1, y: y0 + bp.height - 1, z: z0 + bp.footprint.z - 1 },
+  };
+}
 
 export const BLUEPRINTS: Record<string, Blueprint> = {
   chicken_farm: {
@@ -33,15 +50,20 @@ export const BLUEPRINTS: Record<string, Blueprint> = {
     materials: { "{planks}": 25, "{fence}": 15, "{gate}": 1, hay_block: 2, egg: 3 },
     params: ["wood"],
     footprint: { x: 5, z: 5 },
+    height: 3,
+    below: 1,
   },
   cabin: {
     name: "cabin",
     description:
-      "Petite cabane 5x5x3 (murs, sol et toit dans le même bloc) avec une porte en bois et une torche. Murs en planches/bûches de n'importe quel bois ou en pierre.",
+      "Cabane 10x15, intérieur de 3 blocs de haut où l'on peut marcher. Sol en planches du bois choisi (wood), murs et toit en planches/bûches de n'importe quel bois ou en pierre (wall), une porte, " +
+      "et 4 torches murales si tu en as au moins 4 (facultatif). Coûteuse : 288 blocs de mur, 150 planches de sol.",
     fn: "companion:build/cabin",
-    materials: { "{wall}": 66, "{door}": 1, torch: 1 },
+    materials: { "{wall}": 288, "{planks}": 150, "{door}": 1 },
     params: ["wall", "wood"],
-    footprint: { x: 5, z: 5 },
+    footprint: { x: 10, z: 15 },
+    height: 4,
+    below: 1,
   },
 };
 
@@ -90,10 +112,18 @@ export function resolveMaterials(blueprint: Blueprint, params: ResolvedParams): 
   return out;
 }
 
-/** Arguments de macro pour `/function ... {k:"v",...}`. Valeurs déjà validées (listes fermées). */
-export function macroArgs(params: ResolvedParams): string {
+/**
+ * Arguments de macro pour `/function ... {k:"v",...}`. Valeurs déjà validées (listes fermées).
+ * `needs` (coûts par item, après fusion) donne les seuils de vérification `wallN`, `planksN`... :
+ * si deux gabarits sont le même item (mur en planches = sol en planches), le seuil est la somme.
+ */
+export function macroArgs(params: ResolvedParams, needs: Record<string, number> = {}): string {
   const { wall, planks, fence, gate, door } = params;
-  return `{wall:"${wall}",planks:"${planks}",fence:"${fence}",gate:"${gate}",door:"${door}"}`;
+  const n = (item: string) => needs[item] ?? 0;
+  return (
+    `{wall:"${wall}",planks:"${planks}",fence:"${fence}",gate:"${gate}",door:"${door}",` +
+    `wallN:${n(wall)},planksN:${n(planks)},fenceN:${n(fence)},gateN:${n(gate)},doorN:${n(door)}}`
+  );
 }
 
 export function missingMaterials(

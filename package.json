@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "sync-datapack": "node scripts/sync-datapack.mjs"
   },
   "dependencies": {
     "@langchain/anthropic": "^1.6.0",

@@ -86,6 +86,36 @@ test("run_blueprint : pause humaine, puis exécution si oui", async () => {
   assert.deepEqual(log, ['run_blueprint:{"name":"cabin"}']);
 });
 
+test("run_blueprint : un accord vaut pour les retries de la même construction (autre matériau)", async () => {
+  const { graph, log, cfg } = setup({
+    chat: scripted(
+      call("run_blueprint", { name: "cabin", wall: "acacia_planks" }, "c1"),
+      call("run_blueprint", { name: "cabin", wall: "cobblestone" }, "c2"),
+      new AIMessage("fini"),
+    ),
+  });
+  await graph.invoke(chatInput("construis une cabane"), cfg);
+  assert.equal((await graph.getState(cfg)).tasks.flatMap((t) => t.interrupts ?? []).length, 1);
+  await graph.invoke(new Command({ resume: { approved: true } }), cfg);
+  assert.equal((await graph.getState(cfg)).tasks.flatMap((t) => t.interrupts ?? []).length, 0, "pas de seconde question");
+  assert.equal(log.length, 2);
+});
+
+test("run_blueprint : une fois la construction faite, l'accord est consommé", async () => {
+  const { graph, log, cfg } = setup({
+    chat: scripted(
+      call("run_blueprint", { name: "cabin" }, "c1"),
+      call("run_blueprint", { name: "cabin" }, "c2"),
+      new AIMessage("fini"),
+    ),
+    result: 'Construction "cabin" terminée.',
+  });
+  await graph.invoke(chatInput("construis une cabane"), cfg);
+  await graph.invoke(new Command({ resume: { approved: true } }), cfg);
+  assert.equal(log.length, 1);
+  assert.equal((await graph.getState(cfg)).tasks.flatMap((t) => t.interrupts ?? []).length, 1, "la seconde construction redemande");
+});
+
 test("run_blueprint : refus du joueur => tool jamais exécuté", async () => {
   const { graph, log, cfg } = setup({
     chat: scripted(call("run_blueprint", { name: "cabin" }), new AIMessage("ok, tant pis")),

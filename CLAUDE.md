@@ -37,7 +37,8 @@ START → (idle ? lubie : plan) ; plan → guard → act → plan …
 | `src/memory.ts` | `Journal` (historique brut) et `Memory` (mémoire durable par clé + mission en cours) |
 | `src/prompts.ts` | prompt système (personnalité, STYLE, AGIR D'ABORD, MISSIONS, MÉMORISER, RÈGLES) |
 | `src/llm.ts`, `src/config.ts` | fournisseurs/modèles, variables `.env` |
-| `src/blueprints.ts`, `datapack/companion/` | constructions déterministes (ferme à poules, cabane) |
+| `src/blueprints.ts`, `datapack/companion/` | constructions toutes faites (ferme à poules, cabane 10x15 avec sol en bois) |
+| `src/construction.ts` | **langage de construction** : `PlanSchema`, `validatePlan` (listes fermées, bornes, coût, habitabilité par flood-fill), `planCommands`, `verifyGrid` ; tool `build_structure` (plan → validation → accord → exécution → vérification) |
 | `test/*.test.ts` | politique, graphe, mémoire, câblage fournisseurs — **modèles scriptés, sans réseau ni Minecraft** |
 
 Conventions qui comptent :
@@ -91,7 +92,8 @@ Chaque étape est aussi un exercice d'agentique ; garder le même découpage : *
 6. **Évaluation** (le chaînon manquant de la plupart des projets d'agents)
    - Scénarios rejouables (transcript → comportement attendu), faux monde minimal pour tester les tools sans serveur, LLM-as-judge pour la cohérence, jeu de régression de prompts.
 7. **Contenu**
-   - Plus de blueprints (ferme à mobs, ferme de blé), animation de construction, farm de ressources en boucle, stockage automatique.
+   - Évolutions de `build_structure` : exécuteur « légitime » (poser les blocs un par un avec Mineflayer, sans triche), fondations/terrassement automatiques, import de schematics, boucle de critique après construction (le LLM relit le résultat et corrige).
+   - Farm de ressources en boucle, stockage automatique.
 
 ## Concepts d'agentique illustrés par le projet
 
@@ -108,6 +110,7 @@ $env:Path = 'C:\Program Files\nodejs;' + $env:Path
 & 'C:\Program Files\nodejs\npm.cmd' start     # le bot (serveur lancé avant : server\start.cmd)
 ```
 
+- **Datapack** : le serveur lit une *copie* dans `server/world/datapacks/companion`. Après toute modification de `datapack/`, lancer `npm run sync-datapack` puis taper `reload` dans la console du serveur (sinon `run_blueprint` échoue avec "rien n'a été construit" ; la réponse du serveur est maintenant incluse dans l'erreur).
 - Les scripts `.ps1` sont bloqués par la politique d'exécution : utiliser `.cmd` / `npm.cmd`.
 - Ctrl-C peut échouer dans l'onglet du bot : fermer l'onglet, ou tuer le processus précis (jamais tous les `node` sans regarder).
 - Serveur : `server/start.cmd` (JDK 21 portable, 1.21.4, offline). Dans la console serveur : `op Compagnon` et `op <pseudo>`.

@@ -1,4 +1,6 @@
 import "dotenv/config";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 const env = (key: string, fallback?: string) => process.env[key] || fallback;
 const num = (key: string, fallback: number) => Number(env(key, String(fallback)));
@@ -11,6 +13,9 @@ export const config = {
     port: num("MC_PORT", 25565),
     username: env("MC_USERNAME", "Compagnon")!,
     version: env("MC_VERSION"), // undefined = auto-détection
+    // Monde du serveur LOCAL : permet d'exécuter un plan de construction en un seul `/function` (voir tools.ts).
+    // Sans lui, les commandes partent une par une dans le chat (lent). Par défaut : server/world s'il existe.
+    worldDir: env("WORLD_DIR") ?? (existsSync(join("server", "world", "datapacks")) ? join("server", "world") : undefined),
   },
   llm: {
     // openrouter | google (AI Studio) | ollama | anthropic

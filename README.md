@@ -104,12 +104,32 @@ Le journal (`data/journal.json`) reste l'historique brut des événements.
 | `equip_item` | main ou armure | slot réellement équipé |
 | `chest_contents`, `store_in_chest`, `take_from_chest` | lister, déposer (`*` = toutes les ressources), prendre (64 max) | contenu du coffre, différence d'inventaire |
 | `craft_item`, `give_to_player` | fabriquer, donner | différence d'inventaire |
+| `build_structure` | construire librement à partir d'un plan composé par le modèle (voir « Construire librement ») | plan validé avant, puis blocs réellement posés comparés au plan |
 | `list_blueprints`, `run_blueprint` | constructions (accord oui/non) | matériaux consommés |
 | `remember`, `forget` | mémoire durable (lieux, préférences, faits) | – |
 | `start_mission`, `mission_progress`, `end_mission` | consignes longues, suivies jusqu'au bout | objectifs cochés selon l'inventaire réel |
 | `emote`, `wander` | animations, balade | – |
 
 Garde-fous (`src/policy.ts`) : blocs protégés (coffres, fours, lits...), zone `HOME_*` intouchable, longueur de tunnel plafonnée, mode autonome limité à une allowlist, seul `OWNER_USERNAME` donne des ordres.
+
+## Construire librement
+
+Plutôt qu'un blueprint par bâtiment, le modèle **compose un plan** avec un petit langage (`src/construction.ts`) et du code déterministe fait le reste :
+
+```
+demande → LLM écrit un plan (JSON : box / block / door / clear, coordonnées relatives)
+        → validateur : listes fermées, bornes, coût, "est-ce habitable ?"
+             ├─ erreurs → renvoyées au LLM, qui corrige (générer → valider → réparer)
+             └─ OK → résumé + coût → accord du joueur (oui/non)
+        → exécution (commandes /fill, /setblock, bot op)
+        → vérification : blocs réellement posés comparés au plan (% conforme)
+```
+
+- **Repère** : x = est, z = sud, y = haut ; y=0 le sol du bot, y=-1 le sol posé ; origine 2 blocs à l'est et au sud du bot.
+- **Habitabilité** (bâtiments, `kind: "shelter"`) : flood-fill depuis l'extérieur (un toit troué se voit), 2 blocs de haut libres au-dessus d'un sol plein, une porte qui relie vraiment l'extérieur à l'intérieur (et bien orientée), torches murales accrochées à un mur. `kind: "decor"` saute ces contrôles (enclos, tours, ponts).
+- **Limites** : 40 étapes, 2 500 blocs, 24x24x16, blocs d'une liste fermée (planches, bûches, pierres, escaliers, dalles, clôtures, murets, verre, torches...).
+- **Exécution** : si le serveur est local (`WORLD_DIR`, par défaut `server/world`), le plan est écrit dans un fichier de fonction puis lancé avec `/reload` + `/function` (quelques secondes). Sinon, une commande de chat par seconde (le serveur expulse pour spam au-delà).
+- Les blueprints du datapack (`cabin`, `chicken_farm`) restent utiles : l'exécution y est 100 % déterministe.
 
 ## Installation
 
@@ -118,7 +138,7 @@ Garde-fous (`src/policy.ts`) : blocs protégés (coffres, fours, lits...), zone 
 3. `cp .env.example .env` puis choisis ton fournisseur (voir « Choisir le modèle »), et idéalement `OWNER_USERNAME` (ton pseudo).
 4. **Serveur Minecraft Java** local (jar vanilla ou Paper), dans `server.properties` : `online-mode=false`.
    Le bot se connecte en mode offline ; ne mets pas ce serveur en ligne tel quel.
-5. Copie `datapack/companion/` dans `<monde>/datapacks/`, puis `/reload` en jeu.
+5. Installe le datapack : `npm run sync-datapack` (copie `datapack/companion/` dans `server/world/datapacks/`, ou `WORLD_DIR=<monde>`), puis `reload` dans la console du serveur. **À refaire à chaque modification du dossier `datapack/`** : le serveur utilise une copie, pas le dépôt.
 6. Dans la console du serveur : `op Compagnon` (le bot a besoin du niveau op pour lancer `/function`).
 7. `npm start`, puis parle dans le chat.
 

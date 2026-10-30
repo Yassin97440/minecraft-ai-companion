@@ -144,6 +144,14 @@ type S = typeof State.State;
 export function buildGraph(deps: GraphDeps) {
   const toolsByName = new Map(deps.tools.map((t) => [t.name, t]));
 
+  /** Accords du joueur encore valables, par tool + blueprint (10 min), pour ne pas reposer la même question à chaque retry. */
+  const APPROVAL_TTL_MS = 10 * 60_000;
+  const grants = new Map<string, number>();
+  // Un plan modifié est une autre construction : l'empreinte des étapes entre dans la clé.
+  const fingerprint = (s: string) => [...s].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) | 0, 7).toString(36);
+  const grantKey = (tool: string, args: Record<string, any>) =>
+    `${tool}:${String(args?.name ?? "")}${tool === "build_structure" ? `:${fingerprint(JSON.stringify(args?.steps ?? []))}` : ""}`;
+
   /** Lubie : en mode autonome, un petit modèle invente une idée, filtrée avant d'agir. */
   async function whimNode(state: S) {
     let whim: Whim | null = null;
@@ -225,9 +233,12 @@ export function buildGraph(deps: GraphDeps) {
       if (verdict.kind === "deny") {
         blocked[call.id!] = verdict.reason;
       } else if (verdict.kind === "approve") {
+        // Déjà accepté pour cette construction : on ne redemande pas à chaque nouvel essai (autre matériau, etc.).
+        if ((grants.get(grantKey(call.name, call.args)) ?? 0) > Date.now()) continue;
         // La valeur de reprise est un objet : LangGraph refuse un `resume` falsy (false).
         const answer = interrupt({ question: verdict.question, tool: call.name, args: call.args }) as ApprovalAnswer;
         if (!answer?.approved) blocked[call.id!] = "Le joueur a refusé.";
+        else grants.set(grantKey(call.name, call.args), Date.now() + APPROVAL_TTL_MS);
       }
     }
     return { blocked };
@@ -250,6 +261,10 @@ export function buildGraph(deps: GraphDeps) {
       }
       try {
         const out = await t.invoke(call.args);
+        // La construction a eu lieu : l'accord est consommé, une nouvelle construction redemandera.
+        if ((call.name === "run_blueprint" || call.name === "build_structure") && typeof out === "string" && out.startsWith("Construction")) {
+          grants.delete(grantKey(call.name, call.args));
+        }
         results.push(new ToolMessage({ ...base, content: typeof out === "string" ? out : JSON.stringify(out) }));
       } catch (err) {
         results.push(new ToolMessage({ ...base, status: "error", content: `Erreur: ${(err as Error).message}` }));

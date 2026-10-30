@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { PlanSchema, summarizePlan, validatePlan } from "./construction.js";
 
 export type Mode = "chat" | "idle";
 
@@ -91,6 +92,17 @@ export function checkToolCall(
         return { kind: "deny", reason: `Maximum ${max} pas par tunnel. Fais plusieurs appels.` };
       }
       return { kind: "allow" };
+    }
+    case "build_structure": {
+      // Plan invalide : l'outil renvoie les erreurs au modèle (il corrige son plan) ; rien n'est construit, donc rien à approuver.
+      const parsed = PlanSchema.safeParse(args);
+      if (!parsed.success) return { kind: "allow" };
+      const v = validatePlan(parsed.data);
+      if (v.errors.length || opts.autoApproveBuilds) return { kind: "allow" };
+      return {
+        kind: "approve",
+        question: `Je construis ${summarizePlan(parsed.data, v)} ici (devant et à droite de moi) ? (oui/non)`.slice(0, 250),
+      };
     }
     case "run_blueprint": {
       if (opts.autoApproveBuilds) return { kind: "allow" };

@@ -4,6 +4,7 @@ import { Command } from "@langchain/langgraph";
 import { HumanMessage } from "@langchain/core/messages";
 import { config } from "./config.js";
 import { buildGraph, WhimSchema } from "./graph.js";
+import { parseApproval } from "./approval.js";
 import { assertLlmConfigured, createAgentModel, createWhimModel } from "./llm.js";
 import { Journal, Memory } from "./memory.js";
 import { IDLE_TOOLS } from "./policy.js";
@@ -64,6 +65,13 @@ bot.once("spawn", () => {
   const thread = { configurable: { thread_id: "companion" }, recursionLimit: config.limits.missionSteps * 4 + 20 };
   let running = false;
   let awaitingApproval = false;
+  let unclearAnswers = 0;
+  let approvalTimer: ReturnType<typeof setTimeout> | undefined;
+  const APPROVAL_TIMEOUT_MS = 120_000;
+  const clearApprovalTimer = () => {
+    if (approvalTimer) clearTimeout(approvalTimer);
+    approvalTimer = undefined;
+  };
   let lastActivity = Date.now();
   let lastWhim = 0;
   const queue: string[] = [];
@@ -80,10 +88,20 @@ bot.once("spawn", () => {
       const pending = snap.tasks.flatMap((t) => t.interrupts ?? []);
       if (pending.length) {
         awaitingApproval = true;
+        unclearAnswers = 0;
         bot.chat(String((pending[0].value as any).question));
+        // Sans réponse du joueur, on annule au lieu de rester bloqué indéfiniment.
+        clearApprovalTimer();
+        approvalTimer = setTimeout(() => {
+          if (!awaitingApproval) return;
+          awaitingApproval = false;
+          bot.chat("Pas de réponse, j'annule la construction.");
+          void run(new Command({ resume: { approved: false } }));
+        }, APPROVAL_TIMEOUT_MS);
         return;
       }
       awaitingApproval = false;
+      clearApprovalTimer();
 
       // Si le modèle a répondu en texte sans appeler `say`, on relaie quand même.
       const last = result.messages.at(-1);
@@ -125,10 +143,16 @@ bot.once("spawn", () => {
     journal.append("chat", `${username}: ${message}`);
 
     if (awaitingApproval) {
-      const yes = /^(oui|ouais|yes|yep|ok|go|vas-y|d'accord|dac)\b/i.test(message.trim());
+      const answer = parseApproval(message);
+      if (answer === "unclear" && ++unclearAnswers < 2) {
+        bot.chat("Je n'ai pas compris : réponds « oui » ou « non » pour la construction.");
+        return;
+      }
+      clearApprovalTimer();
       awaitingApproval = false;
-      void run(new Command({ resume: { approved: yes } }));
-      if (!yes) queue.push(`${username}\u0000${message}`);
+      void run(new Command({ resume: { approved: answer === "yes" } }));
+      // Une réponse hors sujet annule la demande, mais le message est traité comme une nouvelle consigne.
+      if (answer === "unclear") queue.push(`${username}\u0000${message}`);
       return;
     }
     // Le joueur reprend la main pendant une mission ou un ordre d'arrêt : on coupe l'action en cours.
