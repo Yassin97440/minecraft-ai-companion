@@ -28,7 +28,7 @@ export const WhimSchema = z.object({
 export type Whim = z.infer<typeof WhimSchema>;
 
 const ACTION_REQUEST =
-  /\b(mine|miner|creuse|creuser|casse|casser|coupe|couper|r[ée]colte|r[ée]colter|ramasse|va|aller|viens|rejoins|suis|reviens|cherche|trouve|dors|dormir|couche|mange|manger|[ée]quipe|prends|sors|sortir|monte|descends|construis|construire|fabrique|crafte|donne|apporte|cache|prot[èe]ge|farme|continue|avance)\b/i;
+  /\b(mine|miner|creuse|creuser|casse|casser|coupe|couper|r[ée]colte|r[ée]colter|ramasse|va|aller|viens|rejoins|suis|reviens|cherche|trouve|dors|dormir|couche|mange|manger|[ée]quipe|prends|ramasse|r[ée]cup[èe]re|sors|sortir|monte|descends|construis|construire|fabrique|crafte|donne|apporte|cache|prot[èe]ge|farme|continue|avance)\b/i;
 
 const NUDGE_PREFIX = "[Système]";
 

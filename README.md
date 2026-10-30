@@ -98,6 +98,8 @@ Le journal (`data/journal.json`) reste l'historique brut des événements.
 | `go_to_player`, `go_to` | se déplacer | distance restante ("Arrivé" ou "Pas arrivé") |
 | `collect_block` | miner/couper un type de bloc | différence d'inventaire |
 | `mine_tunnel` | tunnel ou escalier descendant à la pioche, ramasse les minerais voisins | différence d'inventaire, raison d'arrêt (lave, eau, vide, monstre, vie basse) |
+| `place_block` | poser établi, four, coffre, torche, bloc (devant lui ou à des coordonnées) | case réellement occupée par le bloc ensuite |
+| `pickup_items` | ramasser les objets au sol (après une mort, des drops) | différence d'inventaire |
 | `sleep_in_bed` | aller dormir (nuit ou orage) | `bot.isSleeping` |
 | `dig_out` | sortir d'un trou ou d'une mine | profondeur avant/après |
 | `eat` | manger la meilleure nourriture | niveau de faim avant/après |

@@ -80,6 +80,59 @@ export function createTools(ctx: Ctx) {
     return Math.round(Math.hypot(p.x - x, p.y - y, p.z - z));
   };
 
+  type V3 = ReturnType<Bot["entity"]["position"]["floored"]>;
+  // Côtés d'abord, dessous ensuite, dessus en dernier : une torche ne tient pas au plafond.
+  const NEIGHBORS: [number, number, number][] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, -1, 0], [0, 1, 0]];
+
+  /** Pose `item` sur la case vide `pos`, en s'appuyant sur un bloc plein voisin. Renvoie null si posé, sinon la raison de l'échec. */
+  async function placeAt(item: string, pos: V3): Promise<string | null> {
+    const target = bot.blockAt(pos);
+    if (!target) return "zone non chargée";
+    if (!["air", "cave_air", "water", "lava"].includes(target.name) && !target.name.endsWith("_air")) {
+      return `la case est occupée par ${target.name}`;
+    }
+    const stack = bot.inventory.items().find((i) => i.name === item);
+    if (!stack) return `je n'ai pas de ${item}`;
+    const me = bot.entity.position.floored();
+    if (pos.equals(me) || pos.equals(me.offset(0, 1, 0)) && !item.includes("torch")) return "je suis sur cette case";
+
+    const ref = NEIGHBORS.map(([dx, dy, dz]) => bot.blockAt(pos.offset(dx, dy, dz))).find((b) => b && b.boundingBox === "block");
+    if (!ref) return "aucun bloc plein contre lequel poser";
+
+    if (dist(pos.x, pos.y, pos.z) > 4) {
+      await goto(bot, new goals.GoalNear(pos.x, pos.y, pos.z, 3), 15_000).catch(() => {});
+      if (dist(pos.x, pos.y, pos.z) > 5) return "trop loin et inaccessible";
+    }
+    try {
+      await bot.equip(stack, "hand");
+      await bot.lookAt(pos.offset(0.5, 0.5, 0.5));
+      await bot.placeBlock(ref, pos.minus(ref.position));
+    } catch (err) {
+      return (err as Error).message;
+    }
+    await sleep(200);
+    const now = bot.blockAt(pos)?.name ?? "";
+    return now === "air" || now === "water" || now === "lava" ? "le bloc n'a pas été posé" : null;
+  }
+
+  /** Une case libre (pieds et tête vides, sol plein) à 1-3 blocs du bot, de préférence devant lui. */
+  function freeSpotNear(): V3 | null {
+    const me = bot.entity.position.floored();
+    const fx = Math.round(-Math.sin(bot.entity.yaw));
+    const fz = Math.round(-Math.cos(bot.entity.yaw));
+    const ring: [number, number][] = [[fx * 2, fz * 2], [fx, fz], [fx * 3, fz * 3], [2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2]];
+    for (const [dx, dz] of ring) {
+      for (const dy of [0, 1, -1]) {
+        const p = me.offset(dx, dy, dz);
+        const feet = bot.blockAt(p);
+        const head = bot.blockAt(p.offset(0, 1, 0));
+        const floor = bot.blockAt(p.offset(0, -1, 0));
+        if (feet?.name === "air" && head?.name === "air" && floor?.boundingBox === "block") return p;
+      }
+    }
+    return null;
+  }
+
   const say = tool(
     async ({ message }) => {
       bot.chat(message.slice(0, 240));
@@ -390,6 +443,7 @@ export function createTools(ctx: Ctx) {
       let oz = 0;
       let dug = 0;
       let steps = 0;
+      let torches = 0;
       let stop = "longueur atteinte";
       const at = (x: number, y: number, z: number) => bot.blockAt(start.offset(x, y, z));
       const liquid = (n?: string) => n === "lava" || n === "water";
@@ -448,6 +502,9 @@ export function createTools(ctx: Ctx) {
           oz = nz;
           steps++;
 
+          // Une torche tous les 6 pas (si on en a) : on voit les dangers, les monstres n'apparaissent pas dans le tunnel.
+          if (steps % 6 === 0 && itemCount(bot, "torch") > 0 && !(await placeAt("torch", start.offset(ox, oy + 1, oz)))) torches++;
+
           // Minerais voisins (sauf s'ils touchent de la lave).
           const around: [number, number, number][] = [
             [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [1, 1, 0], [-1, 1, 0], [0, 1, 1], [0, 1, -1], [0, 2, 0], [0, -1, 0],
@@ -472,7 +529,7 @@ export function createTools(ctx: Ctx) {
       const where = formatPos(bot.entity.position);
       journal.append("mine", `${stairs ? "escalier" : "tunnel"} vers ${NAMES_FR[dirKey]} depuis ${formatPos(start)} (${steps} pas)`);
       if (steps > 0 && !memory.entries().some((e) => e.key === "mine")) memory.set("mine", "place", `entrée de ma mine (${stairs ? "escalier" : "tunnel"} vers ${NAMES_FR[dirKey]})`, start);
-      return `${stairs ? "Escalier descendant" : "Tunnel"} vers ${NAMES_FR[dirKey]} : ${steps}/${length} pas, ${dug} blocs cassés (arrêt : ${stop}). Inventaire réel: ${diff}. Position: ${where} (départ ${formatPos(start)}).`;
+      return `${stairs ? "Escalier descendant" : "Tunnel"} vers ${NAMES_FR[dirKey]} : ${steps}/${length} pas, ${dug} blocs cassés${torches ? `, ${torches} torche(s) posée(s)` : itemCount(bot, "torch") ? "" : " (pas de torches : crafte-en avec du charbon et des bâtons)"} (arrêt : ${stop}). Inventaire réel: ${diff}. Position: ${where} (départ ${formatPos(start)}).`;
     },
     {
       name: "mine_tunnel",
@@ -616,6 +673,15 @@ export function createTools(ctx: Ctx) {
       if (!recipes.length) {
         const tableId = bot.registry.blocksByName.crafting_table.id;
         table = bot.findBlock({ matching: tableId, maxDistance: 32 });
+        // Pas d'établi, mais la recette serait faisable avec : on en craft un (4 planches) et on le pose.
+        if (!table && bot.recipesFor(def.id, null, 1, true as any).length > 0) {
+          if (itemCount(bot, "crafting_table") === 0) {
+            const tableRecipe = bot.recipesFor(bot.registry.itemsByName.crafting_table.id, null, 1, null)[0];
+            if (tableRecipe) await bot.craft(tableRecipe, 1).catch(() => {});
+          }
+          const spot = itemCount(bot, "crafting_table") > 0 ? freeSpotNear() : null;
+          if (spot && !(await placeAt("crafting_table", spot))) table = bot.blockAt(spot);
+        }
         if (table) {
           await goto(bot, new goals.GoalGetToBlock(table.position.x, table.position.y, table.position.z), 15_000);
           recipes = bot.recipesFor(def.id, null, 1, table);
@@ -773,6 +839,59 @@ export function createTools(ctx: Ctx) {
         wood: z.string().optional().describe("Famille de bois : porte, clôtures, sol de la ferme. Ex: acacia"),
         wall: z.string().optional().describe("Bloc des murs de la cabane. Ex: acacia_planks, cobblestone, stone_bricks"),
       }),
+    },
+  );
+
+  const placeBlockTool = tool(
+    async ({ item, x, y, z: zc }) => {
+      if (itemCount(bot, item) === 0) return `Impossible : je n'ai pas de ${item}. Inventaire: ${inventorySummary(bot)}`;
+      let spot: V3 | null;
+      if (x !== undefined && y !== undefined && zc !== undefined) {
+        spot = bot.entity.position.floored().offset(Math.floor(x) - Math.floor(bot.entity.position.x), Math.floor(y) - Math.floor(bot.entity.position.y), Math.floor(zc) - Math.floor(bot.entity.position.z));
+      } else {
+        spot = freeSpotNear();
+        if (!spot) return "Impossible : aucune case libre avec un sol plein à proximité. Déplace-toi sur un terrain dégagé.";
+      }
+      const error = await placeAt(item, spot);
+      if (error) return `Échec : ${item} non posé en ${formatPos(spot)} (${error}).`;
+      if (item === "bed" || item.endsWith("_bed")) memory.set("lit", "place", "lit que j'ai posé", spot);
+      return `${item} posé en ${formatPos(spot)} (case réellement occupée par ${bot.blockAt(spot)?.name ?? "?"}).`;
+    },
+    {
+      name: "place_block",
+      description:
+        "Poser un bloc ou objet de l'inventaire : établi (crafting_table), four, coffre, torche, bloc de construction... Sans coordonnées, il le pose sur une case libre devant toi. " +
+        "Avec x,y,z : sur cette case vide, contre un bloc plein voisin. Les torches se posent aussi au mur.",
+      schema: z.object({ item: z.string(), x: z.number().optional(), y: z.number().optional(), z: z.number().optional() }),
+    },
+  );
+
+  const pickupItems = tool(
+    async ({ radius }) => {
+      const r = Math.min(radius ?? 16, 32);
+      const before = inventoryTotals(bot);
+      const tried = new Set<number>();
+      const deadline = Date.now() + 45_000;
+      let seen = 0;
+      while (Date.now() < deadline && !ctx.run.interrupted) {
+        const drop = Object.values(bot.entities)
+          .filter((e) => e.name === "item" && !tried.has(e.id) && e.position.distanceTo(bot.entity.position) <= r)
+          .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
+        if (!drop) break;
+        tried.add(drop.id);
+        seen++;
+        await goto(bot, new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 1), 8_000).catch(() => {});
+        await sleep(300);
+      }
+      const diff = inventoryDiff(before, inventoryTotals(bot));
+      if (!seen) return `Aucun objet au sol dans un rayon de ${r} blocs.`;
+      return `${seen} objet(s) visité(s). Inventaire réel: ${diff}.`;
+    },
+    {
+      name: "pickup_items",
+      description:
+        "Ramasser les objets tombés au sol autour de toi (jusqu'à 32 blocs) : après une mort (va d'abord à l'endroit où tu es mort, ils disparaissent au bout de 5 min), après avoir cassé un bloc, ou des items jetés.",
+      schema: z.object({ radius: z.number().int().min(2).max(32).optional() }),
     },
   );
 
@@ -961,6 +1080,8 @@ export function createTools(ctx: Ctx) {
     wander,
     emote,
     equipItem,
+    placeBlockTool,
+    pickupItems,
     eat,
     sleepInBed,
     digOut,

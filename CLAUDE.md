@@ -53,6 +53,7 @@ Conventions qui comptent :
 
 - Perception : `snapshot()` (position, vie, faim, heure, main, relief/trou, menaces, inventaire), `look_around`, `find_block`.
 - Actions : déplacement, `collect_block`, `mine_tunnel` (tunnel/escalier avec arrêts de sécurité), `sleep_in_bed`, `dig_out`, `eat`, `equip_item`, craft, don, coffres (`chest_contents`, `store_in_chest`, `take_from_chest`), blueprints (accord oui/non).
+- Débrouillardise : `place_block` (établi, torche, coffre...), `craft_item` pose son propre établi, `mine_tunnel` pose une torche tous les 6 pas, `pickup_items` ; à la mort, la position est mémorisée (`mort`) et l'agent est relancé pour récupérer ses affaires (< 5 min).
 - Contrôle : relance « agis, ne parle pas » (`nudge`), anti-boucle (rappel à 3 échecs d'affilée, arrêt à 6), plafonds d'étapes, 429 géré proprement.
 - Mémoire : `Memory` durable (`data/memory.json`) alimentée automatiquement (lit, coffres, entrée de mine) et par `remember`/`forget` ; `Journal` brut.
 - Missions : `start_mission` / `mission_progress` / `end_mission`, boucle `continue` (mode chat uniquement), reprise de main par le joueur.

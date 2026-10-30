@@ -6,7 +6,7 @@ import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langcha
 import { tool } from "@langchain/core/tools";
 import { Command } from "@langchain/langgraph";
 import { z } from "zod";
-import { buildGraph, failureStreak, isFailure, type AgentModel, type Whim } from "../src/graph.js";
+import { buildGraph, failureStreak, isFailure, needsNudge, type AgentModel, type Whim } from "../src/graph.js";
 import { Journal, Memory } from "../src/memory.js";
 
 const call = (name: string, args: Record<string, unknown>, id = `c_${name}`) =>
@@ -178,6 +178,11 @@ test("demande d'action sans tool : le modèle est relancé une fois pour agir", 
   await graph.invoke(chatInput("mine avec ta pioche"), cfg);
   assert.deepEqual(log, ['mine_tunnel:{"length":5}']);
   assert.equal(calls, 3);
+});
+
+test("le rappel de récupération après une mort relance bien vers une action", () => {
+  const msg = new HumanMessage("Système: Tu viens de mourir en 10, 64, 20. Va récupérer et ramasse tes affaires (go_to puis pickup_items).");
+  assert.equal(needsNudge([msg]), true);
 });
 
 test("pas de relance quand le joueur ne demande aucune action, ni quand le modèle abandonne après un rappel", async () => {

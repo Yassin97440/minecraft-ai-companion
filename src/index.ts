@@ -137,6 +137,30 @@ bot.once("spawn", () => {
     await run({ messages: [new HumanMessage(`${username}: ${text}`)], mode: "chat", steps: 0 });
   }
 
+  // Mort : on note où (l'inventaire tombe sur place et disparaît au bout de 5 min), puis on relance l'agent pour qu'il récupère ses affaires.
+  let lastDeath: { x: number; y: number; z: number; at: number } | null = null;
+  let recoveryAsked = 0;
+  bot.on("death", () => {
+    const p = bot.entity.position;
+    lastDeath = { x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z), at: Date.now() };
+    journal.append("event", `je suis mort en ${lastDeath.x}, ${lastDeath.y}, ${lastDeath.z}`);
+    memory.set("mort", "place", "ma dernière mort : mes affaires sont tombées ici (elles disparaissent après 5 min)", lastDeath);
+  });
+  bot.on("spawn", () => {
+    if (!lastDeath || recoveryAsked === lastDeath.at || Date.now() - lastDeath.at > 60_000) return;
+    recoveryAsked = lastDeath.at;
+    const d = lastDeath;
+    setTimeout(
+      () =>
+        void onInstruction(
+          "Système",
+          `Tu viens de mourir en ${d.x}, ${d.y}, ${d.z}. Va récupérer et ramasse tes affaires (go_to puis pickup_items) AVANT 5 minutes, ` +
+            "en évitant ce qui t'a tué (lave, monstres : regarde d'abord avec look_around). Si tu ne peux pas, rééquipe-toi de zéro (bois, établi, outils).",
+        ),
+      3000,
+    );
+  });
+
   bot.on("chat", (username, message) => {
     if (username === bot.username) return;
     if (config.owner && username.toLowerCase() !== config.owner.toLowerCase()) return;
@@ -178,7 +202,6 @@ bot.once("spawn", () => {
   bot.chat("Salut ! Dis-moi ce que je peux faire (ou laisse-moi improviser 😏).");
 });
 
-bot.on("death", () => journal.append("event", "je suis mort"));
 bot.on("kicked", (reason) => console.error("[bot] kické:", reason));
 bot.on("error", (err) => console.error("[bot] erreur:", err));
 bot.on("end", () => {
