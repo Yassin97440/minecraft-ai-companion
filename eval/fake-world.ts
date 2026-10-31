@@ -21,28 +21,6 @@ export type WorldSetup = {
   bed?: P;
 };
 
-/** Objet obtenu en cassant un bloc, et outil minimal requis. */
-export const DROPS: Record<string, { item: string; needs?: string[] }> = {
-  oak_log: { item: "oak_log" },
-  stone: { item: "cobblestone", needs: ["wooden_pickaxe", "stone_pickaxe", "iron_pickaxe"] },
-  coal_ore: { item: "coal", needs: ["wooden_pickaxe", "stone_pickaxe", "iron_pickaxe"] },
-  iron_ore: { item: "raw_iron", needs: ["stone_pickaxe", "iron_pickaxe"] },
-  chest: { item: "chest" },
-};
-
-export const FOODS: Record<string, number> = { bread: 5, cooked_beef: 8, apple: 4 };
-
-type Recipe = { out: string; yields: number; needs: Record<string, number>; table?: boolean };
-export const RECIPES: Record<string, Recipe> = {
-  oak_planks: { out: "oak_planks", yields: 4, needs: { oak_log: 1 } },
-  stick: { out: "stick", yields: 4, needs: { oak_planks: 2 } },
-  crafting_table: { out: "crafting_table", yields: 1, needs: { oak_planks: 4 } },
-  furnace: { out: "furnace", yields: 1, needs: { cobblestone: 8 }, table: true },
-  wooden_pickaxe: { out: "wooden_pickaxe", yields: 1, needs: { oak_planks: 3, stick: 2 }, table: true },
-  stone_pickaxe: { out: "stone_pickaxe", yields: 1, needs: { cobblestone: 3, stick: 2 }, table: true },
-  torch: { out: "torch", yields: 4, needs: { coal: 1, stick: 1 } },
-};
-
 export const dist = (a: P, b: P) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 export const fmt = (p: P) => `${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}`;
 

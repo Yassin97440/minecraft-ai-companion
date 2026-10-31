@@ -2,7 +2,8 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import pathfinderPkg from "mineflayer-pathfinder";
-import { eatBest, fight, flee, gearUp, shelter } from "../survival.js";
+import { formatFoodStatus } from "../food.js";
+import { eatBest, fight, flee, foodDbOf, gearUp, shelter } from "../survival.js";
 import { goto, sleep } from "../actions.js";
 import { formatPos, holeDepth, hostiles, inventoryDiff, inventorySummary, inventoryTotals, surfaceY } from "../world.js";
 import type { ToolEnv } from "./env.js";
@@ -35,9 +36,17 @@ export function survivalTools(env: ToolEnv) {
     },
   );
 
-  const eat = tool(async () => eatBest(bot), {
+  const eat = tool(async ({ item }) => eatBest(bot, item), {
     name: "eat",
-    description: "Manger la meilleure nourriture de l'inventaire.",
+    description:
+      "Manger : sans paramètre, la meilleure nourriture selon une règle fixe (cuit d'abord, sans gaspillage) ; avec item (ex: cooked_beef), cet aliment précis. " +
+      "Les aliments nuisibles (œil d'araignée, patate empoisonnée...) sont refusés, les précieux (pomme dorée) réservés aux urgences. Le résultat dit la faim avant/après.",
+    schema: z.object({ item: z.string().optional().describe("Nom exact de l'aliment, ex: cooked_beef") }),
+  });
+
+  const foodStatus = tool(async () => formatFoodStatus(bot.food, inventoryTotals(bot), foodDbOf(bot)), {
+    name: "food_status",
+    description: "Lecture seule : faim, stock de nourriture en points (aliments sûrs), réserve d'urgence et aliments nuisibles. À appeler pour répondre « as-tu de quoi manger ? ».",
     schema: z.object({}),
   });
 
@@ -156,5 +165,5 @@ export function survivalTools(env: ToolEnv) {
     schema: z.object({}),
   });
 
-  return { equipItem, eat, sleepInBed, digOut, pickupItems, fightTool, fleeTool, takeShelter, gearUpTool };
+  return { equipItem, eat, foodStatus, sleepInBed, digOut, pickupItems, fightTool, fleeTool, takeShelter, gearUpTool };
 }

@@ -17,8 +17,8 @@ import {
 } from "./checks.js";
 import type { Scenario } from "./scenario.js";
 
-const trees = (n: number, at = { x: 5, y: 64, z: 0 }) =>
-  Array.from({ length: n }, (_, i) => ({ name: "oak_log", pos: { x: at.x + i, y: at.y, z: at.z } }));
+const trees = (n: number, at = { x: 5, y: 64, z: 0 }, name = "oak_log") =>
+  Array.from({ length: n }, (_, i) => ({ name, pos: { x: at.x + i, y: at.y, z: at.z } }));
 
 /**
  * Catalogue des scénarios. Chacun cible une propriété de l'agent, pas une fonctionnalité :
@@ -110,6 +110,22 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
+    id: "obtain-bois-disponible",
+    description: "Matériaux autour : seuls des bouleaux sont à portée, le plan récolte du bouleau (pas de chêne introuvable).",
+    world: { blocks: [...trees(4, { x: 5, y: 64, z: 0 }, "birch_log")] },
+    inputs: [{ text: "Bob, fabrique-toi une pioche en bois" }],
+    script: [
+      { calls: [["obtain_item", { item: "wooden_pickaxe" }]] },
+      { calls: [["say", { message: "Pioche en bois prête." }]] },
+    ],
+    checks: [
+      inventoryAtLeast({ wooden_pickaxe: 1 }),
+      custom("obtain_item annonce « Obtenu »", (r) => /^Obtenu 1 wooden_pickaxe/.test(r.calls.find((c) => c.name === "obtain_item")?.result ?? "") || "pas de succès annoncé"),
+      custom("aucun chêne dans l'inventaire", (r) => ![...r.world.inventory.keys()].some((k) => k.startsWith("oak_")) || r.world.inventoryText()),
+      maxLlmCalls(4),
+    ],
+  },
+  {
     id: "obtain-pierre-introuvable",
     description: "obtain_item sans pierre : échec borné et honnête, la progression (pioche en bois) est conservée.",
     world: { blocks: trees(3) },
@@ -147,6 +163,42 @@ export const scenarios: Scenario[] = [
       custom("plan_needs répond Impossible", (r) => /^Impossible/.test(r.calls.find((c) => c.name === "plan_needs")?.result ?? "") || "pas de refus"),
       custom("aucune action sur le monde", (r) => r.executed.every((n) => ["plan_needs", "say"].includes(n)) || r.executed.join(",")),
       maxLlmCalls(4),
+    ],
+  },
+  {
+    id: "faim-bon-aliment",
+    description: "Spec 002 : affamé, il mange le steak cuit (un seul), pas l'œil d'araignée ni la chair putréfiée.",
+    world: { food: 8, inventory: { cooked_beef: 2, spider_eye: 2, rotten_flesh: 1 } },
+    inputs: [{ text: "mange un truc" }],
+    script: [{ calls: [["eat", {}]] }, { calls: [["say", { message: "Steak mangé." }]] }],
+    checks: [
+      custom("la faim a augmenté", (r) => r.world.food > 8 || `faim ${r.world.food}`),
+      custom("un seul steak consommé", (r) => r.world.count("cooked_beef") === 1 || `cooked_beef: ${r.world.count("cooked_beef")}`),
+      custom("nuisible et secours intacts", (r) => (r.world.count("spider_eye") === 2 && r.world.count("rotten_flesh") === 1) || r.world.inventoryText()),
+      maxLlmCalls(4),
+    ],
+  },
+  {
+    id: "refus-aliment-nuisible",
+    description: "Spec 002 : manger un œil d'araignée est refusé avec la vraie raison, rien n'est consommé.",
+    world: { food: 8, inventory: { spider_eye: 2, bread: 1 } },
+    inputs: [{ text: "mange l'oeil d'araignée" }],
+    script: [{ calls: [["eat", { item: "spider_eye" }]] }, { calls: [["say", { message: "C'est du poison, je préfère le pain." }]] }],
+    checks: [
+      custom("refus motivé", (r) => /^Impossible : spider_eye est nuisible/.test(r.calls.find((c) => c.name === "eat")?.result ?? "") || "pas de refus nuisible"),
+      custom("rien consommé", (r) => r.world.count("spider_eye") === 2 && r.world.food === 8),
+      maxLlmCalls(4),
+    ],
+  },
+  {
+    id: "etat-nourriture",
+    description: "Spec 002 : food_status répond à « as-tu de quoi manger ? » sans rien consommer.",
+    world: { food: 12, inventory: { cooked_beef: 3, bread: 2, golden_apple: 1, spider_eye: 1 } },
+    inputs: [{ text: "as-tu de quoi manger ?" }],
+    script: [{ calls: [["food_status", {}]] }, { calls: [["say", { message: "Oui, 34 points de stock." }]] }],
+    checks: [
+      custom("le statut annonce le stock", (r) => /Stock: 34\/40 pts/.test(r.calls.find((c) => c.name === "food_status")?.result ?? "") || "stock absent"),
+      custom("rien consommé", (r) => r.world.count("cooked_beef") === 3 && r.world.food === 12),
     ],
   },
   {

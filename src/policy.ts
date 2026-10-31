@@ -24,6 +24,7 @@ export const IDLE_TOOLS = new Set([
   "gear_up",
   "flee",
   "eat",
+  "food_status",
   "dig_out",
   "collect_block",
   "craft_item",

@@ -1,4 +1,5 @@
 import type { Bot } from "mineflayer";
+import { THRESHOLDS, foodDbFromRegistry, foodStock } from "./food.js";
 import type { Journal, Memory } from "./memory.js";
 
 export type Ctx = {
@@ -118,6 +119,12 @@ export function hostiles(bot: Bot, range = 16) {
 }
 
 /** Résumé compact de l'état du monde, injecté dans le prompt à chaque décision. */
+/** Stock de nourriture en points (aliments sûrs et de secours), pour décider d'un approvisionnement. */
+function foodLine(bot: Bot): string {
+  const stock = foodStock(inventoryTotals(bot), foodDbFromRegistry(bot.registry as never));
+  return `stock ${stock.total}/${THRESHOLDS.safeStock} pts${stock.total < THRESHOLDS.safeStock ? " (bas)" : ""}`;
+}
+
 export function snapshot(bot: Bot): string {
   const players = Object.values(bot.players)
     .filter((p) => p.username !== bot.username)
@@ -146,6 +153,7 @@ export function snapshot(bot: Bot): string {
     `Menaces: ${threats.length ? threats.map((t) => `${t.name} à ${t.dist} blocs`).join(", ") : "aucune"}`,
     `Joueurs: ${players.length ? players.join("; ") : "aucun"}`,
     `Créatures proches: ${mobCounts.size ? [...mobCounts].map(([n, c]) => `${n} x${c}`).join(", ") : "aucune"}`,
+    `Nourriture: ${foodLine(bot)}`,
     `Inventaire: ${inventorySummary(bot)}`,
   ].join("\n");
 }

@@ -7,7 +7,9 @@ import { FURNACE_STACK, SMELT_MS_PER_ITEM, runFurnace, type FurnaceLike } from "
 import { FUELS } from "../src/sources.js";
 import { inventoryDiff } from "../src/world.js";
 import type { Ctx } from "../src/world.js";
-import { DROPS, FOODS, RECIPES, dist, fmt, type FakeWorld } from "./fake-world.js";
+import { dist, fmt, type FakeWorld } from "./fake-world.js";
+import { createFoodDb, eatMeal, formatFoodStatus } from "../src/food.js";
+import { RAW_SOURCES, TIERS } from "../src/sources.js";
 
 /**
  * Tools du faux monde. Mêmes NOMS et mêmes champs d'entrée que les vrais (vérifié par `test/eval-contract.test.ts`),
@@ -23,6 +25,16 @@ export function stubBot(): any {
 
 const inv = (w: FakeWorld) => new Map(w.inventory);
 const recipeDb = createRecipeDb("1.21.4");
+const foodDb = createFoodDb("1.21.4");
+
+/** Ce que donne un bloc et l'outil requis : déduit des MÊMES tables et du MÊME registre que le planificateur (pas de table à part qui dérive). */
+function dropSpec(block: string): { item: string; needs?: string[] } | null {
+  if (block === "chest") return { item: "chest" };
+  const item = Object.entries(RAW_SOURCES).find(([, blocks]) => blocks.includes(block))?.[0];
+  if (!item) return null;
+  const tool = recipeDb.toolFor(block);
+  return { item, needs: tool ? TIERS.slice(TIERS.indexOf(tool.tier)).map((t) => `${t}_${tool.kind}`) : undefined };
+}
 
 export const REAL_MEMORY_TOOLS = ["remember", "forget", "start_mission", "mission_progress", "end_mission"];
 
@@ -61,7 +73,8 @@ export function createFakeTools(world: FakeWorld, ctx: Pick<Ctx, "journal" | "me
   );
 
   // Le planificateur est pur : le faux monde utilise le VRAI, seul l'inventaire est simulé.
-  const planNeeds = tool(async ({ item, count }) => planNeedsText(item, count ?? 1, new Map(world.inventory), recipeDb), {
+  const nearby = () => new Set(world.blocks.filter((b) => dist(b.pos, world.pos) <= 48).map((b) => b.name));
+  const planNeeds = tool(async ({ item, count }) => planNeedsText(item, count ?? 1, new Map(world.inventory), recipeDb, { nearby: nearby() }), {
     name: "plan_needs",
     description: "Calculer ce qu'il faut pour obtenir un objet.",
     schema: z.object({ item: z.string(), count: z.number().int().min(1).optional() }),
@@ -79,7 +92,7 @@ export function createFakeTools(world: FakeWorld, ctx: Pick<Ctx, "journal" | "me
 
   const collectBlock = tool(
     async ({ block, count }) => {
-      const spec = DROPS[block];
+      const spec = dropSpec(block);
       if (!spec) return `Impossible : je ne sais pas récolter "${block}".`;
       if (spec.needs && !world.hasAny(spec.needs)) return `Impossible : ${block} demande un outil (${spec.needs[0]} ou mieux), je n'en ai pas.`;
       if (!world.nearest(block, 64)) return `Aucun ${block} à proximité (64 blocs).`;
@@ -99,36 +112,57 @@ export function createFakeTools(world: FakeWorld, ctx: Pick<Ctx, "journal" | "me
 
   const craftItem = tool(
     async ({ item, count }) => {
-      const r = RECIPES[item];
-      if (!r) return `Impossible : pas de recette pour "${item}".`;
-      const times = Math.ceil(count / r.yields);
-      // Comme le vrai craft_item : s'il faut un établi et qu'il n'y en a pas, il en pose un (4 planches en plus).
-      const tableCost = r.table && !world.tablePlaced && world.count("crafting_table") === 0 ? 4 : 0;
-      const total = new Map<string, number>(Object.entries(r.needs).map(([k, v]) => [k, v * times]));
-      if (tableCost) total.set("oak_planks", (total.get("oak_planks") ?? 0) + tableCost);
-      const missing = [...total].filter(([k, v]) => world.count(k) < v).map(([k, v]) => `${v - world.count(k)} ${k}`);
-      if (missing.length) return `Matériaux manquants : ${missing.join(", ")}.`;
-      const before = inv(world);
-      if (tableCost) world.tablePlaced = true;
-      for (const [k, v] of total) world.add(k, -v);
-      world.add(r.out, times * r.yields);
-      return `Fabriqué. Inventaire réel: ${inventoryDiff(before, world.inventory)}.`;
+      // Recettes du registre réel, comme le vrai craft_item : il prend la première recette réalisable avec l'inventaire.
+      const recipes = recipeDb.recipesFor(item);
+      if (!recipes.length) return `Impossible : pas de recette pour "${item}".`;
+      const anyPlanks = () => [...world.inventory].filter(([k]) => k.endsWith("_planks")).sort((x, y) => y[1] - x[1])[0]?.[0];
+      let best: { missing: string[]; short: number } | undefined;
+      for (const r of recipes) {
+        const times = Math.ceil(count / r.yields);
+        const total = new Map<string, number>(Object.entries(r.ingredients).map(([k, v]) => [k, v * times]));
+        // S'il faut un établi et qu'il n'y en a pas, le vrai craft_item en pose un (4 planches en plus).
+        const needTable = r.station === "table" && !world.tablePlaced && world.count("crafting_table") === 0;
+        const tablePlanks = needTable ? anyPlanks() ?? "oak_planks" : undefined;
+        if (tablePlanks) total.set(tablePlanks, (total.get(tablePlanks) ?? 0) + 4);
+        const lacking = [...total].filter(([k, v]) => world.count(k) < v);
+        if (lacking.length) {
+          const short = lacking.reduce((n, [k, v]) => n + v - world.count(k), 0);
+          if (!best || short < best.short) best = { missing: lacking.map(([k, v]) => `${v - world.count(k)} ${k}`), short };
+          continue;
+        }
+        const before = inv(world);
+        if (needTable) world.tablePlaced = true;
+        for (const [k, v] of total) world.add(k, -v);
+        world.add(item, times * r.yields);
+        return `Fabriqué. Inventaire réel: ${inventoryDiff(before, world.inventory)}.`;
+      }
+      return `Matériaux manquants : ${best?.missing.join(", ")}.`;
     },
     { name: "craft_item", description: "Fabriquer un objet.", schema: z.object({ item: z.string(), count: z.number().int().min(1).max(64) }) },
   );
 
-  const eat = tool(
-    async () => {
-      const food = [...world.inventory.keys()].filter((k) => FOODS[k]).sort((a, b) => FOODS[b] - FOODS[a])[0];
-      if (world.food >= 20) return "Je n'ai pas faim (20/20).";
-      if (!food) return "Je n'ai aucune nourriture mangeable.";
-      const before = world.food;
-      world.add(food, -1);
-      world.food = Math.min(20, world.food + FOODS[food]);
-      return `J'ai mangé ${food} : faim ${before} -> ${world.food}.`;
+  // Les VRAIES règles (food.ts) : classification, choix du repas, vérification de la faim ; seul le monde est simulé.
+  const mealActions = {
+    inventory: () => inv(world),
+    food: () => world.food,
+    health: () => world.health,
+    async consume(name: string) {
+      if (world.count(name) < 1) throw new Error("plus dans l'inventaire");
+      world.add(name, -1);
+      world.food = Math.min(20, world.food + (foodDb[name]?.points ?? 0));
     },
-    { name: "eat", description: "Manger.", schema: z.object({}) },
-  );
+    waitFoodChange: async () => true,
+  };
+  const eat = tool(async ({ item }) => eatMeal(mealActions, foodDb, item), {
+    name: "eat",
+    description: "Manger.",
+    schema: z.object({ item: z.string().optional() }),
+  });
+  const foodStatus = tool(async () => formatFoodStatus(world.food, inv(world), foodDb), {
+    name: "food_status",
+    description: "Faim et stock de nourriture.",
+    schema: z.object({}),
+  });
 
   const pickupItems = tool(
     async ({ radius }) => {
@@ -173,6 +207,7 @@ export function createFakeTools(world: FakeWorld, ctx: Pick<Ctx, "journal" | "me
   // L'exécuteur est le VRAI (src/obtain.ts) ; seules les actions sont simulées, en réutilisant les faux tools ci-dessus.
   const actions: Actions = {
     inventory: () => inv(world),
+    nearbyBlocks: nearby,
     interrupted: () => ctx.run.interrupted,
     now: Date.now,
     async gather(step, wanted) {
@@ -254,7 +289,7 @@ export function createFakeTools(world: FakeWorld, ctx: Pick<Ctx, "journal" | "me
     schema: z.object({ item: z.string(), count: z.number().int().min(1).optional() }),
   });
 
-  const fakes = [say, getStatus, lookAround, findBlock, planNeeds, obtainItemFake, goTo, collectBlock, craftItem, eat, pickupItems, sleepInBed, flee];
+  const fakes = [say, getStatus, lookAround, findBlock, planNeeds, obtainItemFake, goTo, collectBlock, craftItem, eat, foodStatus, pickupItems, sleepInBed, flee];
   const reals = REAL_MEMORY_TOOLS.map((n) => realByName.get(n)!).filter(Boolean);
   return [...fakes, ...reals];
 }

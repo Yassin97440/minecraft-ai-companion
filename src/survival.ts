@@ -1,7 +1,8 @@
 import type { Bot } from "mineflayer";
 import pathfinderPkg from "mineflayer-pathfinder";
 import { bestTool, goto, placeAt, sleep, type V3 } from "./actions.js";
-import { threats } from "./world.js";
+import { chooseMeal, eatMeal, foodDbFromRegistry, type FoodDb } from "./food.js";
+import { inventoryTotals, threats } from "./world.js";
 
 const { goals } = pathfinderPkg;
 
@@ -59,14 +60,15 @@ export function decideReflex(s: DangerState): Reflex {
 
 // ---------------------------------------------------------------- lecture de l'état du bot
 
-const BAD_FOOD = new Set(["rotten_flesh", "spider_eye", "poisonous_potato", "pufferfish", "chorus_fruit", "suspicious_stew"]);
 const SHELTER_STONE = new Set(["cobblestone", "dirt", "stone", "netherrack", "cobbled_deepslate", "andesite", "diorite", "granite"]);
 
-const edibleFoods = (bot: Bot) =>
-  bot.inventory
-    .items()
-    .filter((i) => bot.registry.foods[i.type] && !BAD_FOOD.has(i.name))
-    .sort((a, b) => bot.registry.foods[b.type].foodPoints - bot.registry.foods[a.type].foodPoints);
+const foodDbs = new WeakMap<object, FoodDb>();
+/** Classification des aliments (src/food.ts) : une seule règle pour le réflexe de faim et le tool eat. */
+export function foodDbOf(bot: Bot): FoodDb {
+  let db = foodDbs.get(bot.registry);
+  if (!db) foodDbs.set(bot.registry, (db = foodDbFromRegistry(bot.registry as never)));
+  return db;
+}
 
 /** Le plus gros tas de blocs pleins utilisables pour se barricader. */
 function shelterStack(bot: Bot) {
@@ -91,7 +93,7 @@ export function dangerState(bot: Bot): DangerState {
     headBlocked: !!head && head.boundingBox === "block" && !bot.isSleeping,
     hostiles: threats(bot, 16).map((e) => ({ name: e.name ?? "?", dist: Math.round(e.position.distanceTo(bot.entity.position)) })),
     hasWeapon: !!(bestTool(bot, "sword") || bestTool(bot, "axe")),
-    hasFood: edibleFoods(bot).length > 0,
+    hasFood: "item" in chooseMeal(inventoryTotals(bot), { food: bot.food, health: bot.health }, foodDbOf(bot)),
     shelterBlocks: shelterStack(bot)?.count ?? 0,
   };
 }
@@ -138,17 +140,28 @@ export async function gearUp(bot: Bot): Promise<string> {
   return worn.length ? `équipé : ${worn.join(", ")}` : "rien de mieux à équiper";
 }
 
-/** Mange la meilleure nourriture ; renvoie le résultat vérifié (faim avant/après). */
-export async function eatBest(bot: Bot): Promise<string> {
-  if (bot.food >= 20) return "Je n'ai pas faim (20/20).";
-  const foods = edibleFoods(bot);
-  if (!foods.length) return "Je n'ai aucune nourriture mangeable. Il faut chasser (look_around montre les animaux) ou récolter.";
-  const before = bot.food;
-  await bot.equip(foods[0], "hand");
-  await bot.consume();
-  return bot.food > before
-    ? `J'ai mangé ${foods[0].name} : faim ${Math.round(before)} -> ${Math.round(bot.food)}.`
-    : `Échec : ma faim n'a pas changé (${Math.round(bot.food)}/20).`;
+/** Mange (l'aliment demandé, sinon le meilleur) ; renvoie le résultat vérifié (faim avant/après, après attente du serveur). */
+export async function eatBest(bot: Bot, item?: string): Promise<string> {
+  return eatMeal(
+    {
+      inventory: () => inventoryTotals(bot),
+      food: () => bot.food,
+      health: () => bot.health,
+      async consume(name) {
+        const stack = bot.inventory.items().find((i) => i.name === name);
+        if (!stack) throw new Error("plus dans l'inventaire");
+        await bot.equip(stack, "hand");
+        await bot.consume();
+      },
+      // Le serveur confirme la faim un instant après la consommation : on l'attend (≤ 1,5 s) avant de juger.
+      async waitFoodChange(before) {
+        for (let waited = 0; waited < 1500 && bot.food === before; waited += 100) await sleep(100);
+        return bot.food !== before;
+      },
+    },
+    foodDbOf(bot),
+    item,
+  );
 }
 
 /** Quitte la lave/le feu : va vers l'eau si on brûle, sinon vers la case sûre la plus proche. */

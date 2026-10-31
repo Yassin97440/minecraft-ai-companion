@@ -44,6 +44,11 @@ test("obtain_item : quantité bornée par le garde-fou, autorisé en chat", () =
   assert.equal(checkToolCall("obtain_item", { item: "stick", count: 0 }, "chat", opts).kind, "deny");
 });
 
+test("alimentation : eat et food_status autorisés en mode autonome", () => {
+  assert.equal(checkToolCall("food_status", {}, "idle", opts).kind, "allow");
+  assert.equal(checkToolCall("eat", { item: "cooked_beef" }, "idle", opts).kind, "allow");
+});
+
 test("en mode autonome, seuls les tools de l'allowlist passent", () => {
   assert.equal(checkToolCall("run_blueprint", { name: "cabin" }, "idle", opts).kind, "deny");
   assert.equal(checkToolCall("give_to_player", {}, "idle", opts).kind, "deny");

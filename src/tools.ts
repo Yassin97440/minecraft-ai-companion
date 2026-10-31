@@ -43,6 +43,7 @@ export function createTools(ctx: Ctx) {
     survival.takeShelter,
     survival.gearUpTool,
     survival.eat,
+    survival.foodStatus,
     survival.sleepInBed,
     survival.digOut,
     mining.collectBlock,
