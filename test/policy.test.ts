@@ -37,6 +37,13 @@ test("plan_needs (lecture seule) est autorisé en mode autonome, pas obtain_item
   assert.equal(checkToolCall("obtain_item", { item: "stone_pickaxe" }, "idle", opts).kind, "deny");
 });
 
+test("obtain_item : quantité bornée par le garde-fou, autorisé en chat", () => {
+  assert.equal(checkToolCall("obtain_item", { item: "stone_pickaxe" }, "chat", opts).kind, "allow");
+  assert.equal(checkToolCall("obtain_item", { item: "cobblestone", count: 64 }, "chat", opts).kind, "allow");
+  assert.equal(checkToolCall("obtain_item", { item: "cobblestone", count: 5000 }, "chat", opts).kind, "deny");
+  assert.equal(checkToolCall("obtain_item", { item: "stick", count: 0 }, "chat", opts).kind, "deny");
+});
+
 test("en mode autonome, seuls les tools de l'allowlist passent", () => {
   assert.equal(checkToolCall("run_blueprint", { name: "cabin" }, "idle", opts).kind, "deny");
   assert.equal(checkToolCall("give_to_player", {}, "idle", opts).kind, "deny");

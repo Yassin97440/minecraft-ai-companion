@@ -2,6 +2,7 @@ import { tool, type StructuredToolInterface } from "@langchain/core/tools";
 import { z } from "zod";
 import { createTools } from "../src/tools.js";
 import { createRecipeDb, planNeedsText } from "../src/needs.js";
+import { obtainItem, type Actions } from "../src/obtain.js";
 import { inventoryDiff } from "../src/world.js";
 import type { Ctx } from "../src/world.js";
 import { DROPS, FOODS, RECIPES, dist, fmt, type FakeWorld } from "./fake-world.js";
@@ -167,7 +168,36 @@ export function createFakeTools(world: FakeWorld, ctx: Pick<Ctx, "journal" | "me
     { name: "flee", description: "Fuir les monstres.", schema: z.object({}) },
   );
 
-  const fakes = [say, getStatus, lookAround, findBlock, planNeeds, goTo, collectBlock, craftItem, eat, pickupItems, sleepInBed, flee];
+  // L'exécuteur est le VRAI (src/obtain.ts) ; seules les actions sont simulées, en réutilisant les faux tools ci-dessus.
+  const actions: Actions = {
+    inventory: () => inv(world),
+    interrupted: () => ctx.run.interrupted,
+    now: Date.now,
+    async gather(step, wanted) {
+      const notes: string[] = [];
+      for (const block of step.blocks) {
+        const before = world.count(step.item);
+        notes.push(String(await collectBlock.invoke({ block, count: Math.min(wanted, 32) })));
+        if (world.count(step.item) > before) break;
+      }
+      return notes.join(" | ");
+    },
+    craft: async (item, wanted) => String(await craftItem.invoke({ item, count: Math.min(wanted, 64) })),
+    smelt: async () => "Impossible : la fonte n'est pas simulée.",
+    async placeStation(station) {
+      if (world.count(station) < 1) return `Impossible : pas de ${station} en inventaire.`;
+      world.add(station, -1);
+      if (station === "crafting_table") world.tablePlaced = true;
+      return `${station} posé.`;
+    },
+  };
+  const obtainItemFake = tool(async ({ item, count }) => (await obtainItem(item, count ?? 1, actions, recipeDb)).message, {
+    name: "obtain_item",
+    description: "Obtenir un objet de bout en bout.",
+    schema: z.object({ item: z.string(), count: z.number().int().min(1).optional() }),
+  });
+
+  const fakes = [say, getStatus, lookAround, findBlock, planNeeds, obtainItemFake, goTo, collectBlock, craftItem, eat, pickupItems, sleepInBed, flee];
   const reals = REAL_MEMORY_TOOLS.map((n) => realByName.get(n)!).filter(Boolean);
   return [...fakes, ...reals];
 }

@@ -1,5 +1,6 @@
 import { config } from "./config.js";
 import { PlanSchema, summarizePlan, validatePlan } from "./construction.js";
+import { MAX_BULK } from "./sources.js";
 
 export type Mode = "chat" | "idle";
 
@@ -88,6 +89,12 @@ export function checkToolCall(
       if (Number(args.count ?? 1) > opts.maxCollect) {
         return { kind: "deny", reason: `Maximum ${opts.maxCollect} blocs par appel. Fais plusieurs appels.` };
       }
+      return { kind: "allow" };
+    }
+    case "obtain_item": {
+      // Le planificateur valide aussi la quantité (plafonds par type), mais le garde-fou ne dépend pas de lui.
+      const n = Number(args.count ?? 1);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_BULK) return { kind: "deny", reason: `Quantité invalide (1 à ${MAX_BULK}).` };
       return { kind: "allow" };
     }
     case "mine_tunnel": {

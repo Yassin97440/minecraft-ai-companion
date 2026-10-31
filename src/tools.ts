@@ -9,6 +9,7 @@ import { BLUEPRINTS, footprintBox, macroArgs, missingMaterials, resolveMaterials
 import { WALL_BLOCKS, WOODS } from "./materials.js";
 import { config } from "./config.js";
 import { createRecipeDb, planNeedsText, type RecipeDb } from "./needs.js";
+import { obtainItem, type Actions } from "./obtain.js";
 import { inHome, isProtectedBlock } from "./policy.js";
 import { eatBest, fight, flee, gearUp, shelter } from "./survival.js";
 import { bestTool, freeSpotNear as freeSpotFor, goto, placeAt as placeBlockAt, sleep, type V3 } from "./actions.js";
@@ -806,6 +807,44 @@ export function createTools(ctx: Ctx) {
     },
   );
 
+  /** Actions réelles de l'exécuteur `obtainItem` : elles réutilisent les tools existants (refus de blocs dangereux, établi auto, etc.). */
+  const realActions: Actions = {
+    inventory: () => inventoryTotals(bot),
+    interrupted: () => ctx.run.interrupted,
+    now: Date.now,
+    async gather(step, wanted) {
+      const notes: string[] = [];
+      for (const block of step.blocks) {
+        if (ctx.run.interrupted) break;
+        const before = itemCount(bot, step.item);
+        // Même plafond que la politique : max `maxCollect` blocs par appel ; l'exécuteur rappelle pour le reste.
+        notes.push(String(await collectBlock.invoke({ block, count: Math.min(wanted, config.limits.maxCollect) })));
+        if (itemCount(bot, step.item) > before) break; // cette source a donné : inutile d'essayer l'autre
+      }
+      return notes.join(" | ");
+    },
+    craft: async (item, wanted) => String(await craftItem.invoke({ item, count: Math.min(wanted, 64) })),
+    smelt: async () => "Impossible : la fonte n'est pas encore implémentée (tranche suivante de la spec 001).",
+    placeStation: async (station) => String(await placeBlockTool.invoke({ item: station })),
+  };
+
+  const obtainItemTool = tool(
+    async ({ item, count }) => {
+      recipeDb ??= createRecipeDb(String(bot.version).replace(/^(\d+\.\d+(?:\.\d+)?).*/, "$1"));
+      const report = await obtainItem(item, count ?? 1, realActions, recipeDb);
+      journal.append("obtain", `${item} x${count ?? 1} : ${report.status} (${report.actionsRun} actions)`);
+      return report.message;
+    },
+    {
+      name: "obtain_item",
+      description:
+        "Obtenir un objet de bout en bout (récolter, fabriquer, poser l'établi) en UN seul appel : le code déroule le plan de plan_needs, vérifie l'inventaire à chaque étape " +
+        "et s'arrête de lui-même (budget d'actions, échecs, reprise de main du joueur). À préférer à l'enchaînement manuel de collect_block/craft_item pour fabriquer un outil, " +
+        "une arme, un établi, des torches... Ne l'appelle qu'une fois par objectif ; s'il échoue, lis le message et explique-le au joueur.",
+      schema: z.object({ item: z.string().describe("Nom anglais de l'objet, ex: stone_pickaxe"), count: z.number().int().min(1).optional() }),
+    },
+  );
+
   const pickupItems = tool(
     async ({ radius }) => {
       const r = Math.min(radius ?? 16, 32);
@@ -1045,6 +1084,7 @@ export function createTools(ctx: Ctx) {
     lookAroundTool,
     findBlock,
     planNeedsTool,
+    obtainItemTool,
     goToPlayer,
     goTo,
     wander,
