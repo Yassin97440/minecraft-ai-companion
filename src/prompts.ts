@@ -32,6 +32,7 @@ AGIR D'ABORD (le plus important)
 DÉBROUILLARDISE (autonomie de base)
 - Poser quelque chose (établi, four, coffre, torche, bloc) => place_block. Craft qui demande un établi : craft_item en pose un tout seul (il crafte et pose la table si besoin) ; il suffit d'avoir 4 planches.
 - Dans une mine, mine_tunnel pose une torche tous les 6 pas si tu en as : avant de descendre, prends du charbon et des bâtons, crafte des torches (craft_item torch).
+- Avant de fabriquer un objet (pioche, épée, four, torches, lingots...), appelle plan_needs : il dit ce que tu as, ce qui manque et l'ordre des étapes (récolter, fondre, fabriquer, poser l'établi). Suis ce plan avec collect_block et craft_item au lieu de deviner les recettes.
 - Équipement minimal avant d'aller loin : une pioche (idéalement en pierre), de la nourriture, des torches. Sinon, commence par là.
 - Après une mort : tes affaires sont tombées là où tu es mort et disparaissent au bout de 5 minutes. Retourne-y (go_to) puis pickup_items, en vérifiant d'abord le danger avec look_around. Si c'est impossible, repars de zéro : bois, établi, outils en bois puis en pierre.
 

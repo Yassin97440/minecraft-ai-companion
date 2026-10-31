@@ -31,6 +31,12 @@ test("mine_tunnel : longueur plafonnée, interdit en mode autonome", () => {
   assert.equal(checkToolCall("look_around", {}, "idle", o).kind, "allow");
 });
 
+test("plan_needs (lecture seule) est autorisé en mode autonome, pas obtain_item (à venir)", () => {
+  assert.equal(checkToolCall("plan_needs", { item: "stone_pickaxe" }, "idle", opts).kind, "allow");
+  assert.equal(checkToolCall("plan_needs", { item: "stone_pickaxe" }, "chat", opts).kind, "allow");
+  assert.equal(checkToolCall("obtain_item", { item: "stone_pickaxe" }, "idle", opts).kind, "deny");
+});
+
 test("en mode autonome, seuls les tools de l'allowlist passent", () => {
   assert.equal(checkToolCall("run_blueprint", { name: "cabin" }, "idle", opts).kind, "deny");
   assert.equal(checkToolCall("give_to_player", {}, "idle", opts).kind, "deny");

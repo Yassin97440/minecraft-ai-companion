@@ -14,6 +14,7 @@ export const IDLE_TOOLS = new Set([
   "get_status",
   "look_around",
   "find_block",
+  "plan_needs",
   "go_to",
   "wander",
   "emote",

@@ -1,6 +1,7 @@
 import { tool, type StructuredToolInterface } from "@langchain/core/tools";
 import { z } from "zod";
 import { createTools } from "../src/tools.js";
+import { createRecipeDb, planNeedsText } from "../src/needs.js";
 import { inventoryDiff } from "../src/world.js";
 import type { Ctx } from "../src/world.js";
 import { DROPS, FOODS, RECIPES, dist, fmt, type FakeWorld } from "./fake-world.js";
@@ -18,6 +19,7 @@ export function stubBot(): any {
 }
 
 const inv = (w: FakeWorld) => new Map(w.inventory);
+const recipeDb = createRecipeDb("1.21.4");
 
 export const REAL_MEMORY_TOOLS = ["remember", "forget", "start_mission", "mission_progress", "end_mission"];
 
@@ -54,6 +56,13 @@ export function createFakeTools(world: FakeWorld, ctx: Pick<Ctx, "journal" | "me
     },
     { name: "find_block", description: "Trouver le bloc le plus proche.", schema: z.object({ block: z.string(), maxDistance: z.number().int().min(4).max(64).optional() }) },
   );
+
+  // Le planificateur est pur : le faux monde utilise le VRAI, seul l'inventaire est simulé.
+  const planNeeds = tool(async ({ item, count }) => planNeedsText(item, count ?? 1, new Map(world.inventory), recipeDb), {
+    name: "plan_needs",
+    description: "Calculer ce qu'il faut pour obtenir un objet.",
+    schema: z.object({ item: z.string(), count: z.number().int().min(1).optional() }),
+  });
 
   const goTo = tool(
     async ({ x, y, z }) => {
@@ -158,7 +167,7 @@ export function createFakeTools(world: FakeWorld, ctx: Pick<Ctx, "journal" | "me
     { name: "flee", description: "Fuir les monstres.", schema: z.object({}) },
   );
 
-  const fakes = [say, getStatus, lookAround, findBlock, goTo, collectBlock, craftItem, eat, pickupItems, sleepInBed, flee];
+  const fakes = [say, getStatus, lookAround, findBlock, planNeeds, goTo, collectBlock, craftItem, eat, pickupItems, sleepInBed, flee];
   const reals = REAL_MEMORY_TOOLS.map((n) => realByName.get(n)!).filter(Boolean);
   return [...fakes, ...reals];
 }

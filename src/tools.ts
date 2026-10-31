@@ -8,6 +8,7 @@ import pathfinderPkg from "mineflayer-pathfinder";
 import { BLUEPRINTS, footprintBox, macroArgs, missingMaterials, resolveMaterials, resolveParams } from "./blueprints.js";
 import { WALL_BLOCKS, WOODS } from "./materials.js";
 import { config } from "./config.js";
+import { createRecipeDb, planNeedsText, type RecipeDb } from "./needs.js";
 import { inHome, isProtectedBlock } from "./policy.js";
 import { eatBest, fight, flee, gearUp, shelter } from "./survival.js";
 import { bestTool, freeSpotNear as freeSpotFor, goto, placeAt as placeBlockAt, sleep, type V3 } from "./actions.js";
@@ -150,6 +151,21 @@ export function createTools(ctx: Ctx) {
       name: "go_to",
       description: "Marcher jusqu'à des coordonnées (timeout 30 s).",
       schema: z.object({ x: z.number(), y: z.number(), z: z.number() }),
+    },
+  );
+
+  let recipeDb: RecipeDb | undefined;
+  const planNeedsTool = tool(
+    async ({ item, count }) => {
+      recipeDb ??= createRecipeDb(String(bot.version).replace(/^(\d+\.\d+(?:\.\d+)?).*/, "$1"));
+      return planNeedsText(item, count ?? 1, inventoryTotals(bot), recipeDb);
+    },
+    {
+      name: "plan_needs",
+      description:
+        "Lecture seule : calcule ce qu'il faut pour obtenir un objet (ex: stone_pickaxe), compte tenu de ton inventaire : ce que tu as, ce qui manque, et le plan ordonné " +
+        "(récolter, fondre, fabriquer, poser un établi). À appeler AVANT de te lancer dans une fabrication, puis suis le plan avec collect_block et craft_item. N'agit pas sur le monde.",
+      schema: z.object({ item: z.string().describe("Nom anglais de l'objet, ex: stone_pickaxe, torch, iron_ingot"), count: z.number().int().min(1).optional() }),
     },
   );
 
@@ -1028,6 +1044,7 @@ export function createTools(ctx: Ctx) {
     getStatus,
     lookAroundTool,
     findBlock,
+    planNeedsTool,
     goToPlayer,
     goTo,
     wander,

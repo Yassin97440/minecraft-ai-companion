@@ -54,6 +54,42 @@ export const scenarios: Scenario[] = [
     checks: [inventoryAtLeast({ wooden_pickaxe: 1 }), maxFailedCalls(2), maxLlmCalls(8)],
   },
   {
+    id: "pioche-avec-plan",
+    description: "Spec 001 tranche 1 : plan_needs d'abord, puis exécution du plan (récolte, planches, bâtons, établi, pioche).",
+    world: { blocks: trees(3) },
+    inputs: [{ text: "Bob, fabrique-toi une pioche en bois" }],
+    script: [
+      { calls: [["plan_needs", { item: "wooden_pickaxe" }]] },
+      { calls: [["collect_block", { block: "oak_log", count: 3 }]] },
+      { calls: [["craft_item", { item: "oak_planks", count: 12 }]] },
+      { calls: [["craft_item", { item: "stick", count: 4 }]] },
+      { calls: [["craft_item", { item: "wooden_pickaxe", count: 1 }]] },
+      { calls: [["say", { message: "Pioche en bois prête." }]] },
+    ],
+    checks: [
+      calledInOrder(["plan_needs", "collect_block", "craft_item"]),
+      custom("le plan annonce 3 bûches à récolter", (r) => /oak_log x3/.test(r.calls.find((c) => c.name === "plan_needs")?.result ?? "") || "plan_needs ne parle pas de oak_log x3"),
+      inventoryAtLeast({ wooden_pickaxe: 1 }),
+      noFailedCall(),
+      maxLlmCalls(8),
+    ],
+  },
+  {
+    id: "plan-refuse-hors-perimetre",
+    description: "plan_needs refuse l'impossible (Nether) au lieu d'inventer un plan, sans toucher au monde.",
+    world: {},
+    inputs: [{ text: "fabrique une blaze_rod" }],
+    script: [
+      { calls: [["plan_needs", { item: "blaze_rod" }]] },
+      { calls: [["say", { message: "C'est hors de ma portée pour l'instant." }]] },
+    ],
+    checks: [
+      custom("plan_needs répond Impossible", (r) => /^Impossible/.test(r.calls.find((c) => c.name === "plan_needs")?.result ?? "") || "pas de refus"),
+      custom("aucune action sur le monde", (r) => r.executed.every((n) => ["plan_needs", "say"].includes(n)) || r.executed.join(",")),
+      maxLlmCalls(4),
+    ],
+  },
+  {
     id: "boucle-bloquee",
     description: "Anti-boucle : le même échec en boucle s'arrête avec un rappel, sans épuiser le budget.",
     world: { blocks: [] },
