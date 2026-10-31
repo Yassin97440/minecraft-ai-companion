@@ -72,6 +72,13 @@ export class Memory {
     return e?.pos && this.now() - e.t < DEATH_TTL_MS ? e : null;
   }
 
+  /** Affaires récupérées : oublie le lieu de la mort si on s'y trouve (≤ 12 blocs). Renvoie vrai si oublié. */
+  resolveDeath(me: { x: number; y: number; z: number }): boolean {
+    const d = this.pendingDeath();
+    if (!d?.pos || Math.hypot(me.x - d.pos.x, me.y - d.pos.y, me.z - d.pos.z) > 12) return false;
+    return this.forget("mort");
+  }
+
   forget(key: string): boolean {
     const k = key.trim().toLowerCase();
     const before = this.store.entries.length;
