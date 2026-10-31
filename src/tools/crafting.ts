@@ -5,6 +5,8 @@ import pathfinderPkg from "mineflayer-pathfinder";
 import { config } from "../config.js";
 import { createRecipeDb, planNeedsText, type RecipeDb } from "../needs.js";
 import { obtainItem, type Actions } from "../obtain.js";
+import { RAW_SOURCES } from "../sources.js";
+import type { Bot } from "mineflayer";
 import { smeltInFurnace } from "../smelting.js";
 import { goto, sleep, type V3 } from "../actions.js";
 import { formatPos, inventoryDiff, inventorySummary, inventoryTotals, itemCount } from "../world.js";
@@ -13,6 +15,22 @@ import type { miningTools } from "./mining.js";
 
 const { goals } = pathfinderPkg;
 
+
+/**
+ * Quels blocs sources (bois, pierre, minerais...) sont à portée ? Une recherche PAR ressource : un balayage global renverrait
+ * les N blocs les plus proches (la pierre sous terre noierait les arbres un peu plus loin).
+ */
+function nearbySources(bot: Bot): Set<string> {
+  const found = new Set<string>();
+  for (const blocks of Object.values(RAW_SOURCES)) {
+    const ids = blocks.map((n) => bot.registry.blocksByName[n]?.id).filter((i): i is number => i !== undefined);
+    if (!ids.length) continue;
+    const at = bot.findBlock({ matching: ids, maxDistance: 48 });
+    const name = at && bot.blockAt(at.position)?.name;
+    if (name) found.add(name);
+  }
+  return found;
+}
 
 export function craftingTools(env: ToolEnv, mining: { collectBlock: ReturnType<typeof miningTools>["collectBlock"] }) {
   const { ctx, bot, journal, memory, placeAt, freeSpotNear } = env;
@@ -110,7 +128,7 @@ export function craftingTools(env: ToolEnv, mining: { collectBlock: ReturnType<t
   const planNeedsTool = tool(
     async ({ item, count }) => {
       recipeDb ??= createRecipeDb(String(bot.version).replace(/^(\d+\.\d+(?:\.\d+)?).*/, "$1"));
-      return planNeedsText(item, count ?? 1, inventoryTotals(bot), recipeDb);
+      return planNeedsText(item, count ?? 1, inventoryTotals(bot), recipeDb, { nearby: nearbySources(bot) });
     },
     {
       name: "plan_needs",
@@ -124,6 +142,7 @@ export function craftingTools(env: ToolEnv, mining: { collectBlock: ReturnType<t
   /** Actions réelles de l'exécuteur `obtainItem` : elles réutilisent les tools existants (refus de blocs dangereux, établi auto, etc.). */
   const realActions: Actions = {
     inventory: () => inventoryTotals(bot),
+    nearbyBlocks: () => nearbySources(bot),
     interrupted: () => ctx.run.interrupted,
     now: Date.now,
     async gather(step, wanted) {

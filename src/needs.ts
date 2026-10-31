@@ -69,9 +69,18 @@ export function createRecipeDb(version: string): RecipeDb {
 // ---------------------------------------------------------------- planification
 
 /** État d'une hypothèse de plan : cloné à chaque alternative explorée. */
-type State = { stock: Map<string, number>; steps: Step[]; tableReady: boolean; furnaceReady: boolean; touched: Set<string> };
+type State = { stock: Map<string, number>; steps: Step[]; tableReady: boolean; furnaceReady: boolean; touched: Set<string>; penalty: number };
 type Fail = { fail: string };
-const cloneState = (s: State): State => ({ stock: new Map(s.stock), steps: [...s.steps], tableReady: s.tableReady, furnaceReady: s.furnaceReady, touched: new Set(s.touched) });
+const cloneState = (s: State): State => ({
+  stock: new Map(s.stock),
+  steps: [...s.steps],
+  tableReady: s.tableReady,
+  furnaceReady: s.furnaceReady,
+  touched: new Set(s.touched),
+  penalty: s.penalty,
+});
+/** Coût d'une récolte dont aucune source n'est connue autour : assez grand pour passer après toute alternative disponible sur place. */
+const FAR_PENALTY = 50;
 const isFail = (x: State | Fail): x is Fail => "fail" in x;
 const has = (s: State, item: string) => s.stock.get(item) ?? 0;
 const add = (s: State, item: string, n: number) => s.stock.set(item, has(s, item) + n);
@@ -85,9 +94,17 @@ function materialRank(r: Recipe): number {
   return Math.min(99, ...ranks);
 }
 
+export type PlanOptions = {
+  /** Noms des blocs sources vus autour du bot (ex: "birch_log", "stone"). Absent = on ne sait pas : préférences par défaut. */
+  nearby?: ReadonlySet<string>;
+};
+
 class Planner {
   nodes = 0;
-  constructor(private db: RecipeDb) {}
+  constructor(
+    private db: RecipeDb,
+    private opts: PlanOptions = {},
+  ) {}
 
   /** Garantit `count` exemplaires de `item` dans le stock de l'état (et les en retire pour l'usage demandé). */
   need(item: string, count: number, st: State, path: string[]): State | Fail {
@@ -113,7 +130,8 @@ class Planner {
       const reasons = options.filter(isFail).map((o) => o.fail);
       return { fail: reasons.find((r) => r === "too_complex") ?? reasons[0] ?? `${item} : aucune source ni recette connue` };
     }
-    return ok.reduce((best, o) => (o.steps.length < best.steps.length ? o : best));
+    // Le coût compte aussi les récoltes sans source connue autour (penalty) : on prend ce qui est à portée plutôt que le chêne par défaut.
+    return ok.reduce((best, o) => (o.steps.length + o.penalty < best.steps.length + best.penalty ? o : best));
   }
 
   private gather(item: string, count: number, st: State, path: string[]): State | Fail {
@@ -121,6 +139,7 @@ class Planner {
     const tool = this.db.toolFor(blocks[0]);
     const withTool = tool ? this.ensureTool(tool, st, path) : st;
     if (isFail(withTool)) return withTool;
+    if (this.opts.nearby && !blocks.some((b) => this.opts.nearby!.has(b))) withTool.penalty += FAR_PENALTY;
     withTool.steps.push({ type: "gather", item, count, blocks, tool });
     return withTool;
   }
@@ -183,15 +202,15 @@ class Planner {
 
 const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, "_");
 
-export function planNeeds(rawItem: string, count: number, inventory: Map<string, number>, db: RecipeDb): NeedsPlan | Refusal {
+export function planNeeds(rawItem: string, count: number, inventory: Map<string, number>, db: RecipeDb, opts: PlanOptions = {}): NeedsPlan | Refusal {
   const item = normalize(rawItem);
   if (!db.isItem(item)) return { ok: false, reason: "unknown_item", detail: `"${rawItem}" est inconnu.` };
   if (isOutOfScope(item)) return { ok: false, reason: "out_of_scope", detail: `${item} est hors périmètre (Nether/End).` };
   const cap = RAW_SOURCES[item] || /_(log|planks)$/.test(item) ? MAX_BULK : MAX_ITEMS;
   if (!Number.isInteger(count) || count < 1 || count > cap) return { ok: false, reason: "quantity_cap", detail: `quantité trop grande (max ${cap}).` };
 
-  const start: State = { stock: new Map(inventory), steps: [], tableReady: false, furnaceReady: false, touched: new Set() };
-  const planner = new Planner(db);
+  const start: State = { stock: new Map(inventory), steps: [], tableReady: false, furnaceReady: false, touched: new Set(), penalty: 0 };
+  const planner = new Planner(db, opts);
   const result = planner.need(item, count, start, []);
   if (isFail(result)) {
     if (result.fail === "too_complex") return { ok: false, reason: "too_complex", detail: `${item} : l'arbre de fabrication est trop complexe.` };
@@ -255,6 +274,6 @@ export function formatPlan(p: NeedsPlan | Refusal): string {
 }
 
 /** Point d'entrée commun au vrai tool et au faux monde. */
-export function planNeedsText(item: string, count: number, inventory: Map<string, number>, db: RecipeDb): string {
-  return formatPlan(planNeeds(item, count, inventory, db));
+export function planNeedsText(item: string, count: number, inventory: Map<string, number>, db: RecipeDb, opts: PlanOptions = {}): string {
+  return formatPlan(planNeeds(item, count, inventory, db, opts));
 }

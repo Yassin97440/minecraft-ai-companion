@@ -174,3 +174,14 @@ test("un tool qui lève une exception est traité comme un échec borné", async
   assert.equal(r.status, "failed");
   assert.match(r.message, /pathfinder planté/);
 });
+
+test("nearbyBlocks : l'exécuteur planifie avec les blocs à portée (bouleau, pas chêne)", async () => {
+  const w = world();
+  const gathered: string[] = [];
+  const real = w.actions.gather;
+  w.actions.gather = async (step, count) => (gathered.push(step.item), real(step, count));
+  w.actions.nearbyBlocks = () => new Set(["birch_log"]);
+  const r = await obtainItem("wooden_pickaxe", 1, w.actions, db);
+  assert.equal(r.status, "done", r.message);
+  assert.deepEqual([...new Set(gathered)], ["birch_log"]);
+});

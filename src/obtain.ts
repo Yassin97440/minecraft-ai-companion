@@ -13,6 +13,8 @@ export type Inventory = Map<string, number>;
 
 export interface Actions {
   inventory(): Inventory;
+  /** Blocs sources vus autour du bot (pour choisir le bois/la pierre disponibles). Absent = préférences par défaut. */
+  nearbyBlocks?(): ReadonlySet<string>;
   /** Casse/ramasse jusqu'à `count` de l'objet (essaie les blocs sources dans l'ordre). Renvoie une note lisible. */
   gather(step: Extract<Step, { type: "gather" }>, count: number): Promise<string>;
   craft(item: string, count: number): Promise<string>;
@@ -87,7 +89,7 @@ export async function obtainItem(item: string, wanted: number, a: Actions, db: R
     return { status, obtained, actionsRun: actions, failedStep, message: message.replace("{gain}", fmtDiff(obtained)) };
   };
 
-  const plan = planNeeds(item, wanted, startInv, db);
+  const plan = planNeeds(item, wanted, startInv, db, { nearby: a.nearbyBlocks?.() });
   if (!plan.ok) return report("failed", `Impossible : ${plan.detail}`);
   if (!plan.steps.length) return report("done", `Rien à faire : tu as déjà ${wanted} ${plan.goal.item}.`);
 

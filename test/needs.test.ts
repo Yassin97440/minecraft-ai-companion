@@ -161,3 +161,33 @@ test("borne dure : un registre pathologique est refusé sans bloquer", () => {
 test("planNeedsText : texte stable pour le modèle", () => {
   assert.match(planNeedsText("torch", 4, inv({ stick: 2, coal: 1, oak_planks: 3 }), db), /Plan : .*craft torch x4/);
 });
+
+test("matériaux autour : le bois et la pierre présents sont choisis, le plan reste exécutable", () => {
+  const nearby = (...names: string[]) => ({ nearby: new Set(names) });
+  const gathered = (p: NeedsPlan) => p.steps.filter((s) => s.type === "gather").map((s) => (s as { item: string }).item);
+
+  const birch = planNeeds("stone_pickaxe", 1, inv(), db, nearby("birch_log", "stone")) as NeedsPlan;
+  assert.ok(birch.ok);
+  assert.deepEqual(gathered(birch).sort(), ["birch_log", "cobblestone"]);
+  assert.ok((simulate(birch.steps, {}).get("stone_pickaxe") ?? 0) >= 1);
+
+  const spruce = planNeeds("furnace", 1, inv(), db, nearby("spruce_log", "cobblestone")) as NeedsPlan;
+  assert.ok(spruce.ok);
+  assert.ok(gathered(spruce).includes("spruce_log") && !gathered(spruce).includes("oak_log"));
+
+  const deep = planNeeds("stone_pickaxe", 1, inv({ oak_planks: 5, stick: 2, wooden_pickaxe: 1, crafting_table: 1 }), db, nearby("deepslate")) as NeedsPlan;
+  assert.ok(deep.ok);
+  assert.deepEqual(gathered(deep), ["cobbled_deepslate"]);
+});
+
+test("matériaux autour : rien d'identifié => préférences par défaut (chêne, cobblestone), comme sans information", () => {
+  const without = JSON.stringify(plan("stone_pickaxe"));
+  assert.equal(JSON.stringify(planNeeds("stone_pickaxe", 1, inv(), db, { nearby: new Set() })), without);
+  assert.equal(JSON.stringify(planNeeds("stone_pickaxe", 1, inv(), db, {})), without);
+});
+
+test("matériaux autour : le bois déjà possédé l'emporte sur un bois voisin", () => {
+  const p = planNeeds("stick", 4, inv({ birch_planks: 2 }), db, { nearby: new Set(["oak_log"]) }) as NeedsPlan;
+  assert.ok(p.ok);
+  assert.deepEqual(p.steps.map((s) => s.type), ["craft"]);
+});
