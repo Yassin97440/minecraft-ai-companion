@@ -44,7 +44,7 @@ Même découpage dans les huit plans, pour des raisons pédagogiques et de testa
 
 | Fichier | Touché par | Précaution |
 |---|---|---|
-| `src/tools.ts` (≈ 1 060 lignes) | toutes | extraire d'abord `collectBlocks`/`craftOne` (001), ajouter les nouveaux tools dans des fichiers dédiés (`tools-*.ts`) plutôt que dans ce monolithe |
+| `src/tools.ts` (découpé en `src/tools/*.ts`) | toutes | extraire d'abord `collectBlocks`/`craftOne` (001), ajouter les nouveaux tools dans des fichiers dédiés (`tools-*.ts`) plutôt que dans ce monolithe |
 | `src/survival.ts` | 002 (`eatBest`), 003 (`gearUp`, `fight`, `decideReflex`) | tests de caractérisation avant tout refactor ; 002 avant 003 |
 | `src/policy.ts` | toutes (`IDLE_TOOLS`, nouvelles règles) | une règle + un test à chaque ajout |
 | `src/construction.ts` | 005, 006 (`kind "farm"`), 007 (`kind "redstone"`) | 005 stabilise l'interface `Plan` avant 006/007 |

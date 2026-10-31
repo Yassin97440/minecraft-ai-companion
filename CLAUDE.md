@@ -32,7 +32,7 @@ START → (idle ? lubie : plan) ; plan → guard → act → plan …
 | `src/index.ts` | bot Mineflayer, file de messages, reprise de main (`STOP_WORDS`, `ctx.run.interrupted`), approbations oui/non, minuteur de lubies |
 | `src/graph.ts` | graphe : `lubie`, `plan`, `guard`, `act`, `nudge`, `continue` ; anti-boucle (`failureStreak`), missions (`needsContinue`), plafonds d'étapes |
 | `src/policy.ts` | **fonction pure** `checkToolCall` : allow / deny / approve ; allowlist du mode autonome (`IDLE_TOOLS`) ; blocs protégés ; zone `HOME_*` |
-| `src/tools.ts` | tous les tools LangChain (voir README) ; chacun **vérifie le résultat réel** et le renvoie en texte |
+| `src/tools.ts` + `src/tools/*.ts` | `tools.ts` assemble ; un fichier par groupe (`core`, `survival`, `mining`, `chests`, `crafting`, `building`, `memory`) ; `env.ts` = bot/mémoire/aides partagés. Tous les tools LangChain (voir README) ; chacun **vérifie le résultat réel** et le renvoie en texte |
 | `src/world.ts` | `Ctx`, `snapshot()` (perception injectée à chaque décision), `lookAround`, `holeDepth`, `inventoryDiff` |
 | `src/memory.ts` | `Journal` (historique brut) et `Memory` (mémoire durable par clé + mission en cours) |
 | `src/prompts.ts` | prompt système (personnalité, STYLE, AGIR D'ABORD, MISSIONS, MÉMORISER, RÈGLES) |
