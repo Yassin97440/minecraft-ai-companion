@@ -3,6 +3,8 @@ import { z } from "zod";
 import { createTools } from "../src/tools.js";
 import { createRecipeDb, planNeedsText } from "../src/needs.js";
 import { obtainItem, type Actions } from "../src/obtain.js";
+import { FURNACE_STACK, SMELT_MS_PER_ITEM, runFurnace, type FurnaceLike } from "../src/smelting.js";
+import { FUELS } from "../src/sources.js";
 import { inventoryDiff } from "../src/world.js";
 import type { Ctx } from "../src/world.js";
 import { DROPS, FOODS, RECIPES, dist, fmt, type FakeWorld } from "./fake-world.js";
@@ -183,11 +185,66 @@ export function createFakeTools(world: FakeWorld, ctx: Pick<Ctx, "journal" | "me
       return notes.join(" | ");
     },
     craft: async (item, wanted) => String(await craftItem.invoke({ item, count: Math.min(wanted, 64) })),
-    smelt: async () => "Impossible : la fonte n'est pas simulée.",
+    async smelt(step, wanted) {
+      if (!world.furnacePlaced) return "Impossible : aucun four à proximité (32 blocs).";
+      const count = Math.min(wanted, FURNACE_STACK, world.count(step.input));
+      if (count < 1) return `Impossible : je n'ai pas de ${step.input} à cuire.`;
+      const perFuel = FUELS.find((f) => f.item === step.fuel)?.smelts ?? 1;
+      const fuelUnits = Math.ceil(count / perFuel);
+      if (world.count(step.fuel) < fuelUnits) return `Impossible : il me faut ${fuelUnits} ${step.fuel} comme combustible.`;
+      // La vraie boucle d'attente (runFurnace) tourne contre un faux four et une horloge virtuelle : 10 s de jeu par objet, 0 s réelle.
+      let clock = 0;
+      let progress = 0;
+      let input = 0;
+      let cooked = 0;
+      let collected = 0;
+      let fuelLoaded = 0;
+      const furnace: FurnaceLike = {
+        async putInput(_t, _m, n) {
+          world.add(step.input, -n);
+          input += n;
+        },
+        async putFuel(_t, _m, n) {
+          world.add(step.fuel, -n);
+          fuelLoaded += n;
+        },
+        outputItem: () => (cooked > 0 ? { count: cooked } : null),
+        async takeOutput() {
+          world.add(step.output, cooked);
+          collected += cooked;
+          cooked = 0;
+        },
+        async takeInput() {
+          world.add(step.input, input);
+          input = 0;
+        },
+        async takeFuel() {
+          world.add(step.fuel, Math.max(0, fuelLoaded - Math.ceil(collected / perFuel)));
+          fuelLoaded = 0;
+        },
+        close() {},
+      };
+      const deps = {
+        interrupted: () => ctx.run.interrupted,
+        now: () => clock,
+        sleep: async (ms: number) => {
+          clock += ms;
+          progress += ms;
+          while (progress >= SMELT_MS_PER_ITEM && input > 0) {
+            progress -= SMELT_MS_PER_ITEM;
+            input--;
+            cooked++;
+          }
+        },
+      };
+      const r = await runFurnace(furnace, { inputType: 0, fuelType: 1, count, fuelUnits }, deps);
+      return `Four : ${r.note}.`;
+    },
     async placeStation(station) {
       if (world.count(station) < 1) return `Impossible : pas de ${station} en inventaire.`;
       world.add(station, -1);
       if (station === "crafting_table") world.tablePlaced = true;
+      else world.furnacePlaced = true;
       return `${station} posé.`;
     },
   };

@@ -37,6 +37,7 @@ export const RECIPES: Record<string, Recipe> = {
   oak_planks: { out: "oak_planks", yields: 4, needs: { oak_log: 1 } },
   stick: { out: "stick", yields: 4, needs: { oak_planks: 2 } },
   crafting_table: { out: "crafting_table", yields: 1, needs: { oak_planks: 4 } },
+  furnace: { out: "furnace", yields: 1, needs: { cobblestone: 8 }, table: true },
   wooden_pickaxe: { out: "wooden_pickaxe", yields: 1, needs: { oak_planks: 3, stick: 2 }, table: true },
   stone_pickaxe: { out: "stone_pickaxe", yields: 1, needs: { cobblestone: 3, stick: 2 }, table: true },
   torch: { out: "torch", yields: 4, needs: { coal: 1, stick: 1 } },
@@ -56,6 +57,7 @@ export class FakeWorld {
   hostiles: { name: string; pos: P }[];
   bed?: P;
   tablePlaced = false;
+  furnacePlaced = false;
   /** Tout ce que le compagnon a dit dans le chat. */
   said: string[] = [];
 

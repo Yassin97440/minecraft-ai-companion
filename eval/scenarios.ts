@@ -87,6 +87,29 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
+    id: "obtain-lingots-fer",
+    description: "Spec 001 fonte : 3 lingots de fer de bout en bout (outils, minerai, four posé, charbon, cuisson) en un seul obtain_item.",
+    world: {
+      blocks: [
+        ...trees(4),
+        ...Array.from({ length: 12 }, (_, i) => ({ name: "stone", pos: { x: 10 + i, y: 64, z: 3 } })),
+        ...Array.from({ length: 3 }, (_, i) => ({ name: "iron_ore", pos: { x: 10 + i, y: 62, z: 8 } })),
+        ...Array.from({ length: 2 }, (_, i) => ({ name: "coal_ore", pos: { x: 20 + i, y: 62, z: 8 } })),
+      ],
+    },
+    inputs: [{ text: "Bob, ramène-moi 3 lingots de fer" }],
+    script: [
+      { calls: [["obtain_item", { item: "iron_ingot", count: 3 }]] },
+      { calls: [["say", { message: "3 lingots de fer." }]] },
+    ],
+    checks: [
+      inventoryAtLeast({ iron_ingot: 3 }),
+      custom("obtain_item annonce « Obtenu »", (r) => /^Obtenu 3 iron_ingot/.test(r.calls.find((c) => c.name === "obtain_item")?.result ?? "") || "pas de succès annoncé"),
+      custom("le minerai brut a été cuit", (r) => r.world.count("raw_iron") === 0 || `raw_iron restant: ${r.world.count("raw_iron")}`),
+      maxLlmCalls(4),
+    ],
+  },
+  {
     id: "obtain-pierre-introuvable",
     description: "obtain_item sans pierre : échec borné et honnête, la progression (pioche en bois) est conservée.",
     world: { blocks: trees(3) },

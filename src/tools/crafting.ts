@@ -5,6 +5,7 @@ import pathfinderPkg from "mineflayer-pathfinder";
 import { config } from "../config.js";
 import { createRecipeDb, planNeedsText, type RecipeDb } from "../needs.js";
 import { obtainItem, type Actions } from "../obtain.js";
+import { smeltInFurnace } from "../smelting.js";
 import { goto, sleep, type V3 } from "../actions.js";
 import { formatPos, inventoryDiff, inventorySummary, inventoryTotals, itemCount } from "../world.js";
 import type { ToolEnv } from "./env.js";
@@ -137,7 +138,7 @@ export function craftingTools(env: ToolEnv, mining: { collectBlock: ReturnType<t
       return notes.join(" | ");
     },
     craft: async (item, wanted) => String(await craftItem.invoke({ item, count: Math.min(wanted, 64) })),
-    smelt: async () => "Impossible : la fonte n'est pas encore implémentée (tranche suivante de la spec 001).",
+    smelt: async (step, wanted) => smeltInFurnace(bot, step, wanted, () => ctx.run.interrupted),
     placeStation: async (station) => String(await placeBlockTool.invoke({ item: station })),
   };
 

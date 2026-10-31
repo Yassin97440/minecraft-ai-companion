@@ -6,7 +6,7 @@ import { obtainItem, type Actions, type Budget } from "../src/obtain.js";
 const db = createRecipeDb("1.21.4");
 
 /** Faux monde minimal pour l'exécuteur : un inventaire, des actions qui le modifient, des compteurs d'appels. */
-function world(have: Record<string, number> = {}, opts: { gatherPerCall?: number; lie?: boolean; failGather?: boolean; interruptAfter?: number; clock?: { t: number; tick: number } } = {}) {
+function world(have: Record<string, number> = {}, opts: { gatherPerCall?: number; lie?: boolean; failGather?: boolean; failSmelt?: boolean; interruptAfter?: number; clock?: { t: number; tick: number } } = {}) {
   const inv = new Map(Object.entries(have));
   const add = (k: string, v: number) => inv.set(k, (inv.get(k) ?? 0) + v);
   const calls: string[] = [];
@@ -34,9 +34,14 @@ function world(have: Record<string, number> = {}, opts: { gatherPerCall?: number
       add(item, times * r.yields);
       return "ok";
     },
-    async smelt() {
+    async smelt(step, count) {
       calls.push("smelt");
-      return "Impossible : la fonte n'est pas implémentée";
+      if (opts.failSmelt) return "Impossible : aucun four à proximité (32 blocs).";
+      const n = Math.min(count, inv.get(step.input) ?? 0);
+      add(step.input, -n);
+      add(step.fuel, -Math.ceil(n / 8));
+      add(step.output, n);
+      return "ok";
     },
     async placeStation(station) {
       calls.push(`place ${station}`);
@@ -140,13 +145,24 @@ test("budget de temps : horloge injectée, arrêt dès le dépassement", async (
   assert.ok(w.calls.length <= 4, `${w.calls.length} actions`);
 });
 
-test("fonte non implémentée : échec explicite, pas de faux succès", async () => {
+test("fonte : de minerai brut aux lingots, four posé avant la cuisson, combustible consommé", async () => {
   const w = world({ raw_iron: 3, furnace: 1, coal: 1 });
+  const r = await obtainItem("iron_ingot", 3, w.actions, db);
+  assert.equal(r.status, "done", r.message);
+  assert.equal(w.inv.get("iron_ingot"), 3);
+  assert.equal(w.inv.get("raw_iron") ?? 0, 0);
+  assert.equal(w.inv.get("coal") ?? 0, 0);
+  assert.ok(w.calls.indexOf("place furnace") < w.calls.indexOf("smelt"));
+});
+
+test("fonte impossible (pas de four) : 3 essais, échec explicite, pas de faux lingots", async () => {
+  const w = world({ raw_iron: 3, furnace: 1, coal: 1 }, { failSmelt: true });
   const r = await obtainItem("iron_ingot", 3, w.actions, db);
   assert.equal(r.status, "failed");
   assert.match(r.message, /smelt raw_iron/);
-  assert.match(r.message, /fonte n'est pas implémentée/);
+  assert.match(r.message, /aucun four/);
   assert.equal(w.inv.get("iron_ingot") ?? 0, 0);
+  assert.equal(w.calls.filter((c) => c === "smelt").length, 3);
 });
 
 test("un tool qui lève une exception est traité comme un échec borné", async () => {

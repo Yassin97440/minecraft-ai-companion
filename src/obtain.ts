@@ -16,7 +16,8 @@ export interface Actions {
   /** Casse/ramasse jusqu'à `count` de l'objet (essaie les blocs sources dans l'ordre). Renvoie une note lisible. */
   gather(step: Extract<Step, { type: "gather" }>, count: number): Promise<string>;
   craft(item: string, count: number): Promise<string>;
-  smelt(step: Extract<Step, { type: "smelt" }>): Promise<string>;
+  /** Cuit jusqu'à `count` unités dans un four déjà posé. */
+  smelt(step: Extract<Step, { type: "smelt" }>, count: number): Promise<string>;
   placeStation(station: "crafting_table" | "furnace"): Promise<string>;
   /** Le joueur a repris la main. */
   interrupted(): boolean;
@@ -71,7 +72,7 @@ async function runOnce(step: Step, remaining: number, a: Actions): Promise<strin
     case "craft":
       return a.craft(step.item, remaining);
     case "smelt":
-      return a.smelt(step);
+      return a.smelt(step, remaining);
     case "place_station":
       return a.placeStation(step.station);
   }
