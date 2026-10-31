@@ -7,7 +7,8 @@ import { buildGraph, WhimSchema } from "./graph.js";
 import { parseApproval } from "./approval.js";
 import { startSurvival } from "./survival.js";
 import { assertLlmConfigured, createAgentModel, createWhimModel } from "./llm.js";
-import { Journal, Memory } from "./memory.js";
+import { DEATH_TTL_MS, Journal, Memory } from "./memory.js";
+import { canResumeAfterReflex, enqueue, type Queued } from "./instructions.js";
 import { IDLE_TOOLS } from "./policy.js";
 import { createTools } from "./tools.js";
 import { Tracer } from "./trace.js";
@@ -80,7 +81,8 @@ bot.once("spawn", () => {
   };
   let lastActivity = Date.now();
   let lastWhim = 0;
-  const queue: string[] = [];
+  const queue: Queued[] = [];
+  let lastResume = 0;
 
   async function run(input: unknown) {
     running = true;
@@ -134,13 +136,13 @@ bot.once("spawn", () => {
       running = false;
       lastActivity = Date.now();
       const next = queue.shift();
-      if (next) void onInstruction(next.split("\u0000")[0], next.split("\u0000")[1]);
+      if (next) void onInstruction(next.username, next.text);
     }
   }
 
   async function onInstruction(username: string, text: string) {
     if (running) {
-      queue.push(`${username}\u0000${text}`);
+      enqueue(queue, { username, text });
       return;
     }
     await run({ messages: [new HumanMessage(`${username}: ${text}`)], mode: "chat", steps: 0 });
@@ -163,34 +165,37 @@ bot.once("spawn", () => {
         );
       }
       // Le danger est passé : si une mission était en cours, l'agent la reprend.
-      if (memory.activeMission() && reflex.action !== "eat") {
+      // Une seule relance par épisode de danger (sinon chaque réflexe d'un combat long coûte un tour LLM).
+      if (memory.activeMission() && reflex.action !== "eat" && canResumeAfterReflex(lastResume, Date.now())) {
+        lastResume = Date.now();
         void onInstruction("Système", "Le danger est écarté. Reprends ta mission en cours (voir ta mémoire), en restant prudent (look_around d'abord).");
       }
     },
   });
 
   // Mort : on note où (l'inventaire tombe sur place et disparaît au bout de 5 min), puis on relance l'agent pour qu'il récupère ses affaires.
-  let lastDeath: { x: number; y: number; z: number; at: number } | null = null;
+  // Le lieu de la mort vit dans la mémoire durable (épinglée) : il survit à un redémarrage, et expire seul après 5 min.
   let recoveryAsked = 0;
   bot.on("death", () => {
     const p = bot.entity.position;
-    lastDeath = { x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z), at: Date.now() };
-    journal.append("event", `je suis mort en ${lastDeath.x}, ${lastDeath.y}, ${lastDeath.z}`);
-    memory.set("mort", "place", "ma dernière mort : mes affaires sont tombées ici (elles disparaissent après 5 min)", lastDeath);
+    const pos = { x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z) };
+    journal.append("event", `je suis mort en ${pos.x}, ${pos.y}, ${pos.z}`);
+    memory.set("mort", "place", "ma dernière mort : mes affaires sont tombées ici (elles disparaissent après 5 min)", pos);
   });
   bot.on("spawn", () => {
-    if (!lastDeath || recoveryAsked === lastDeath.at || Date.now() - lastDeath.at > 60_000) return;
-    recoveryAsked = lastDeath.at;
-    const d = lastDeath;
-    setTimeout(
-      () =>
-        void onInstruction(
-          "Système",
-          `Tu viens de mourir en ${d.x}, ${d.y}, ${d.z}. Va récupérer et ramasse tes affaires (go_to puis pickup_items) AVANT 5 minutes, ` +
-            "en évitant ce qui t'a tué (lave, monstres : regarde d'abord avec look_around). Si tu ne peux pas, rééquipe-toi de zéro (bois, établi, outils).",
-        ),
-      3000,
-    );
+    const d = memory.pendingDeath();
+    if (!d?.pos || recoveryAsked === d.t) return;
+    recoveryAsked = d.t;
+    setTimeout(() => {
+      const left = memory.pendingDeath(); // revérifié : récupéré ou expiré entre-temps ?
+      if (!left?.pos) return;
+      const minutes = Math.max(1, Math.round((DEATH_TTL_MS - (Date.now() - left.t)) / 60_000));
+      void onInstruction(
+        "Système",
+        `Tu es mort en ${left.pos.x}, ${left.pos.y}, ${left.pos.z}. Va récupérer et ramasse tes affaires (go_to puis pickup_items) dans les ${minutes} minute(s) qui restent, ` +
+          "en évitant ce qui t'a tué (lave, monstres : regarde d'abord avec look_around). Si tu ne peux pas, rééquipe-toi de zéro (bois, établi, outils).",
+      );
+    }, 3000);
   });
 
   bot.on("chat", (username, message) => {
@@ -208,7 +213,7 @@ bot.once("spawn", () => {
       awaitingApproval = false;
       void run(new Command({ resume: { approved: answer === "yes" } }));
       // Une réponse hors sujet annule la demande, mais le message est traité comme une nouvelle consigne.
-      if (answer === "unclear") queue.push(`${username}\u0000${message}`);
+      if (answer === "unclear") enqueue(queue, { username, text: message });
       return;
     }
     // Le joueur reprend la main pendant une mission ou un ordre d'arrêt : on coupe l'action en cours.

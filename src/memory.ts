@@ -8,10 +8,18 @@ export type Mission = {
   objectives: { text: string; done: boolean }[];
   status: "active" | "done" | "abandoned";
   summary?: string;
+  /** Dernière activité (création ou objectif coché) : sert à expirer une mission oubliée. */
+  updatedAt?: number;
 };
 type MemoryStore = { entries: MemoryEntry[]; mission: Mission | null };
 
 const MAX_FACTS = 60;
+/** Une mission sans aucun progrès depuis ce délai est abandonnée (le modèle a oublié `end_mission`). */
+export const MISSION_TTL_MS = 30 * 60_000;
+/** Les objets tombés à la mort disparaissent au bout de 5 min. */
+export const DEATH_TTL_MS = 5 * 60_000;
+/** Entrées vitales : jamais évincées par le plafond (sinon 60 coffres effacent la base ou le lieu de la mort). */
+const PINNED = /^(mort|lit|mine|base|home)$/;
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 /**
@@ -21,7 +29,10 @@ const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,
 export class Memory {
   private store: MemoryStore = { entries: [], mission: null };
 
-  constructor(private file = path.join("data", "memory.json")) {
+  constructor(
+    private file = path.join("data", "memory.json"),
+    private now: () => number = Date.now,
+  ) {
     try {
       this.store = { entries: [], mission: null, ...JSON.parse(fs.readFileSync(this.file, "utf8")) };
     } catch {
@@ -45,12 +56,20 @@ export class Memory {
       kind,
       text: text.slice(0, 200),
       pos: pos && { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) },
-      t: Date.now(),
+      t: this.now(),
     };
     this.store.entries = this.store.entries.filter((e) => e.key !== entry.key);
     this.store.entries.push(entry);
-    if (this.store.entries.length > MAX_FACTS) this.store.entries.splice(0, this.store.entries.length - MAX_FACTS);
+    // Éviction : les plus anciennes entrées NON épinglées d'abord.
+    let excess = this.store.entries.length - MAX_FACTS;
+    this.store.entries = this.store.entries.filter((e) => !(excess > 0 && !PINNED.test(e.key) && excess-- > 0));
     this.save();
+  }
+
+  /** Lieu de la mort, si les affaires peuvent encore être là (< 5 min). */
+  pendingDeath(): MemoryEntry | null {
+    const e = this.store.entries.find((x) => x.key === "mort");
+    return e?.pos && this.now() - e.t < DEATH_TTL_MS ? e : null;
   }
 
   forget(key: string): boolean {
@@ -65,12 +84,21 @@ export class Memory {
     return [...this.store.entries];
   }
 
+  /** Mission en cours ; une mission inactive depuis MISSION_TTL_MS est abandonnée au passage. */
   activeMission(): Mission | null {
-    return this.store.mission?.status === "active" ? this.store.mission : null;
+    const m = this.store.mission;
+    if (m?.status !== "active") return null;
+    if (this.now() - (m.updatedAt ?? 0) > MISSION_TTL_MS) {
+      m.status = "abandoned";
+      m.summary = "expirée : aucun progrès depuis 30 min";
+      this.save();
+      return null;
+    }
+    return m;
   }
 
   startMission(goal: string, objectives: string[]): Mission {
-    this.store.mission = { goal, objectives: objectives.map((text) => ({ text, done: false })), status: "active" };
+    this.store.mission = { goal, objectives: objectives.map((text) => ({ text, done: false })), status: "active", updatedAt: this.now() };
     this.save();
     return this.store.mission;
   }
@@ -83,6 +111,7 @@ export class Memory {
     const obj = m.objectives.find((o) => norm(o.text).includes(q) || q.includes(norm(o.text)));
     if (!obj) return null;
     obj.done = done;
+    m.updatedAt = this.now();
     this.save();
     return m;
   }

@@ -809,6 +809,12 @@ export function createTools(ctx: Ctx) {
       }
       const diff = inventoryDiff(before, inventoryTotals(bot));
       if (!seen) return `Aucun objet au sol dans un rayon de ${r} blocs.`;
+      // Affaires de la mort récupérées : on oublie le lieu (sinon le bot y retournerait au prochain redémarrage).
+      const death = memory.pendingDeath();
+      const me = bot.entity.position;
+      if (death?.pos && /^\+/.test(diff) && Math.hypot(me.x - death.pos.x, me.y - death.pos.y, me.z - death.pos.z) <= 12) {
+        memory.forget("mort");
+      }
       return `${seen} objet(s) visité(s). Inventaire réel: ${diff}.`;
     },
     {

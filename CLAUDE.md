@@ -71,7 +71,7 @@ Fichiers : skills dans `.claude/skills/speckit-*`, modèles et scripts dans `.sp
 - Contrôle : relance « agis, ne parle pas » (`nudge`), anti-boucle (rappel à 3 échecs d'affilée, arrêt à 6), plafonds d'étapes, 429 géré proprement.
 - Mémoire : `Memory` durable (`data/memory.json`) alimentée automatiquement (lit, coffres, entrée de mine) et par `remember`/`forget` ; `Journal` brut.
 - Missions : `start_mission` / `mission_progress` / `end_mission`, boucle `continue` (mode chat uniquement), reprise de main par le joueur.
-- 28 tests verts (`npm test`), typecheck vert.
+- 74 tests verts (`npm test`), typecheck vert. Fiabilisation : entrées de mémoire épinglées (`mort`, `lit`, `mine`, `base`), mort persistée avec expiration 5 min (`Memory.pendingDeath`), mission expirée après 30 min sans progrès, file d'instructions bornée (`src/instructions.ts`), une seule relance de mission par épisode de danger.
 
 **Non vérifié en jeu** : la plupart des tools Mineflayer (coffres, tunnel, sommeil, `dig_out`), la boucle de mission avec un vrai modèle, le comportement quand le modèle oublie `end_mission` (une mission "fantôme" relancerait le bot à chaque message).
 
